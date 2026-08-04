@@ -1,0 +1,45 @@
+name: One-time Vercel production redeploy
+
+on:
+  schedule:
+    - cron: "45 13 4 8 *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  redeploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Trigger one clean production deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/redeploy-once.yml
+          date -u +"production redeploy %Y-%m-%dT%H:%M:%SZ" > .vercel-trigger
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .vercel-trigger .github/workflows/redeploy-once.yml
+          git commit -m "chore: run one-time production redeploy"
+          git push origin main
+
+      - name: Verify production URL
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://jj-media-social-outbound-raphaelo-s-projects.vercel.app"
+          for attempt in $(seq 1 60); do
+            code=$(curl -L -sS -o /tmp/site.html -w "%{http_code}" "$url" || true)
+            if [ "$code" = "200" ] && grep -qi "JJ-Media\|Social Audit\|Outbound" /tmp/site.html; then
+              echo "Production verified: $url"
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "Production URL was not ready within the verification window."
+          exit 1
