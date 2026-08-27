@@ -1,0 +1,32 @@
+name: Unpack JJ-Media source
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.unpack-trigger'
+
+permissions:
+  contents: write
+
+jobs:
+  unpack:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source archive
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Restore real Next.js source
+        run: node scripts/bootstrap-source.mjs
+
+      - name: Prepare clean development branch
+        run: |
+          rm -rf node_modules .next
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -C admin-v2-source
+          git add -A
+          git commit -m "chore: unpack JJ-Media Next.js source for admin v2" || true
+          git push --force origin admin-v2-source
