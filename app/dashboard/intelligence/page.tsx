@@ -22,15 +22,15 @@ export default function IntelligencePage() {
       actions={<Link href="/dashboard/integrations">Datenquellen verbinden</Link>}
     >
       <section className={styles.heroCard}>
-        <div><small>INTELLIGENCE STATUS</small><strong>{ready}/{sources.length}</strong><p>Datenquellen vorbereitet</p></div>
-        <div className={styles.heroText}><h2>Ein Gehirn über dem gesamten Kundengewinnungssystem.</h2><p>Lead-Daten und personalisierte Video-Signale sind bereits nativ vorhanden. Clarity, Search Console, GA4, GBP und Performance-Daten werden hier schrittweise zugeschaltet.</p></div>
+        <div><small>INTELLIGENCE SETUP</small><strong>{ready}/{sources.length}</strong><p>Datenquellen eingerichtet</p></div>
+        <div className={styles.heroText}><h2>Ein Gehirn über dem gesamten Kundengewinnungssystem.</h2><p>Lead-Daten und personalisierte Video-Signale sind bereits nativ vorhanden. Externe Quellen werden erst dann als echte Live-Daten ausgewertet, wenn die jeweilige API erfolgreich antwortet.</p></div>
       </section>
 
       <section className={styles.cards}>
         {sources.map((source) => (
           <article key={source.name} className={styles.card}>
-            <div className={styles.cardTop}><span className={source.ready ? styles.ready : styles.open} /><b>{source.ready ? "LIVE" : "VORBEREITET"}</b></div>
-            <h3>{source.name}</h3><p>{source.purpose}</p><small>{source.ready ? "Zugangsdaten erkannt" : `Aktiviert sich mit ${source.env}`}</small>
+            <div className={styles.cardTop}><span className={source.ready ? styles.ready : styles.open} /><b>{source.ready ? "EINGERICHTET" : "VORBEREITET"}</b></div>
+            <h3>{source.name}</h3><p>{source.purpose}</p><small>{source.ready ? "Zugangsdaten vorhanden · Live-Check folgt beim Abruf" : `Aktiviert sich mit ${source.env}`}</small>
           </article>
         ))}
       </section>
@@ -43,7 +43,7 @@ export default function IntelligencePage() {
       </section>
 
       <section className={styles.note}>
-        <strong>Schon vorbereitet:</strong> Der Clarity Data-Export-Endpunkt ist im Backend angelegt und speichert niemals den Token im Browser. Wegen des Clarity-Limits wird später serverseitig gecacht statt bei jedem Dashboard-Aufruf neu abgerufen.
+        <strong>Bereits funktional vorbereitet:</strong> Der Clarity Data-Export-Endpunkt liegt serverseitig im Backend und gibt den Token niemals an den Browser weiter. Abrufe werden gecacht, damit das Clarity-Tageslimit nicht durch Dashboard-Refreshes verbrannt wird.
       </section>
     </AdminShell>
   );
