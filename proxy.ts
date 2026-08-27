@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { COCKPIT_COOKIE, validCockpitToken } from "@/lib/cockpit-auth";
 
+const BASE_PATH = "/admin";
 const publicApiPrefixes = [
   "/api/cockpit/login",
   "/api/auth/",
@@ -17,8 +18,13 @@ const publicApiPrefixes = [
   "/api/telegram/webhook",
 ];
 
+function withoutBasePath(pathname: string) {
+  if (pathname === BASE_PATH) return "/";
+  return pathname.startsWith(`${BASE_PATH}/`) ? pathname.slice(BASE_PATH.length) : pathname;
+}
+
 export async function proxy(request: NextRequest) {
-  const pathname = request.nextUrl.pathname;
+  const pathname = withoutBasePath(request.nextUrl.pathname);
   if (publicApiPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(prefix))) {
     return NextResponse.next();
   }
@@ -30,8 +36,9 @@ export async function proxy(request: NextRequest) {
     return NextResponse.json({ error: "Cockpit-Anmeldung erforderlich." }, { status: 401 });
   }
 
-  const loginUrl = new URL("/login", request.url);
-  loginUrl.searchParams.set("next", `${pathname}${request.nextUrl.search}`);
+  const loginUrl = new URL(`${BASE_PATH}/login`, request.url);
+  const target = `${BASE_PATH}${pathname === "/" ? "/dashboard" : pathname}${request.nextUrl.search}`;
+  loginUrl.searchParams.set("next", target);
   return NextResponse.redirect(loginUrl);
 }
 

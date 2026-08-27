@@ -3,6 +3,8 @@
 import { FormEvent, useState } from "react";
 import styles from "./CockpitLogin.module.css";
 
+const BASE_PATH = "/admin";
+
 export default function CockpitLogin() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -20,8 +22,9 @@ export default function CockpitLogin() {
       });
       const payload = await response.json() as { error?: string };
       if (!response.ok) throw new Error(payload.error || "Anmeldung fehlgeschlagen.");
-      const target = new URLSearchParams(window.location.search).get("next");
-      window.location.assign(target?.startsWith("/dashboard") ? target : "/dashboard");
+      const requested = new URLSearchParams(window.location.search).get("next");
+      const target = requested?.startsWith(`${BASE_PATH}/dashboard`) ? requested : `${BASE_PATH}/dashboard`;
+      window.location.assign(target);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Anmeldung fehlgeschlagen.");
       setLoading(false);
@@ -33,34 +36,25 @@ export default function CockpitLogin() {
       <section className={styles.story}>
         <div className={styles.brand}><span>JJ</span><strong>JJ-Media</strong></div>
         <div>
-          <p className={styles.eyebrow}>Social Audit Engine</p>
-          <h1>Dein System.<br />Deine Leads.<br /><em>Ein Zugang.</em></h1>
-          <p>Das Cockpit ist geschützt. Persönliche Kundenseiten bleiben weiterhin ohne Anmeldung erreichbar.</p>
+          <p className={styles.eyebrow}>Growth OS</p>
+          <h1>Leads.<br />Videos.<br /><em>Umsatzsignale.</em></h1>
+          <p>Das interne JJ-Media-System bündelt Outbound, CRM, personalisierte Social-Analysevideos und Intelligence in einem geschützten Zugang.</p>
         </div>
-        <div className={styles.flow}><span>Instagram</span><i>→</i><span>Analysevideo</span><i>→</i><span>Termin</span></div>
+        <div className={styles.flow}><span>Social Profil</span><i>→</i><span>Analysevideo</span><i>→</i><span>Termin</span></div>
       </section>
 
       <section className={styles.loginWrap}>
         <form className={styles.card} onSubmit={submit}>
           <p className={styles.eyebrow}>Geschützter Bereich</p>
-          <h2>Cockpit öffnen</h2>
-          <p>Gib dein Passwort ein. Die Anmeldung bleibt auf diesem Gerät 30 Tage aktiv.</p>
+          <h2>Growth OS öffnen</h2>
+          <p>Passwort eingeben. Die Anmeldung bleibt auf diesem Gerät 30 Tage aktiv.</p>
           <label>
             <span>Passwort</span>
-            <input
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              autoComplete="current-password"
-              autoFocus
-              required
-            />
+            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" autoFocus required />
           </label>
           {error && <div className={styles.error} role="alert">{error}</div>}
-          <button type="submit" disabled={loading || !password}>
-            {loading ? "Wird geprüft …" : "Cockpit öffnen →"}
-          </button>
-          <small>Nur das interne Cockpit ist geschützt. Videolinks für Leads funktionieren öffentlich.</small>
+          <button type="submit" disabled={loading || !password}>{loading ? "Wird geprüft …" : "Growth OS öffnen →"}</button>
+          <small>Nur der interne Adminbereich ist geschützt. Personalisierte Analyse-Links für Leads bleiben öffentlich erreichbar.</small>
         </form>
       </section>
     </main>
