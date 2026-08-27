@@ -24,6 +24,7 @@ jobs:
       - name: Prepare clean development branch
         run: |
           rm -rf node_modules .next
+          rm -f .github/workflows/sync-n8n.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -C admin-v2-source
