@@ -1,0 +1,48 @@
+.renderPending {
+  position: relative;
+  display: grid;
+  overflow: hidden;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  place-items: center;
+  border: 1px solid rgba(255, 104, 23, .5);
+  border-radius: 14px;
+  background: #07101d;
+  box-shadow: 0 22px 80px rgba(0, 0, 0, .38);
+}
+
+.renderPending img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: .34;
+  object-fit: cover;
+  object-position: top center;
+}
+
+.renderPending div {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  justify-items: center;
+  gap: 9px;
+  padding: 24px;
+  text-align: center;
+}
+
+.renderPending span {
+  color: #ff7b34;
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+
+.renderPending strong {
+  max-width: 430px;
+  color: #fff;
+  font-size: clamp(18px, 2.4vw, 32px);
+  line-height: 1.15;
+}
+
