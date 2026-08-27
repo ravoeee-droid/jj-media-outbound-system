@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
 
 export default function LegacyEnrichmentPage() {
-  redirect("/dashboard#leads");
+  redirect("/dashboard/outbound");
 }
