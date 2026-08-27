@@ -14,7 +14,6 @@ const publicApiPrefixes = [
   "/api/internal/social-profile-capture",
   "/api/preview/",
   "/api/cron/automation",
-  "/api/campaign-control",
   "/api/telegram/webhook",
 ];
 
@@ -43,5 +42,11 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/api/:path*"],
+  matcher: [
+    "/dashboard/:path*",
+    "/system/:path*",
+    "/telegram/:path*",
+    "/renderer-status/:path*",
+    "/api/:path*",
+  ],
 };
