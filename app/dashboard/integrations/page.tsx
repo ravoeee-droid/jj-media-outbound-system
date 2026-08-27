@@ -19,7 +19,7 @@ export default function IntegrationsPage() {
       active="integrations"
       eyebrow="Connections"
       title="Alle Datenquellen an einem Ort."
-      description="Die Oberfläche zeigt nur Verbindungen, die das System wirklich prüfen kann. Zugangsdaten bleiben ausschließlich serverseitig in Vercel Environment Variables."
+      description="Zugangsdaten bleiben ausschließlich serverseitig. Ein vorhandener Key wird als eingerichtet markiert; erst ein erfolgreicher Datenabruf gilt später als verifizierte Live-Verbindung."
       actions={<Link href="/dashboard/intelligence">Intelligence öffnen</Link>}
     >
       <section className={styles.setupGrid}>
@@ -30,12 +30,12 @@ export default function IntegrationsPage() {
               <p>{integration.detail}</p>
               <code>{integration.env}</code>
             </div>
-            <span className={`${styles.setupStatus} ${integration.ready ? styles.setupStatusReady : styles.setupStatusOpen}`}>{integration.ready ? "VERBUNDEN" : "NOCH OFFEN"}</span>
+            <span className={`${styles.setupStatus} ${integration.ready ? styles.setupStatusReady : styles.setupStatusOpen}`}>{integration.ready ? "EINGERICHTET" : "NOCH OFFEN"}</span>
           </article>
         ))}
       </section>
       <section className={styles.note}>
-        <strong>Wichtig:</strong> Die kostenlosen/self-hosted Tools werden nicht alle gleichzeitig hochgezogen. Wir verbinden sie modular, damit das System schnell bleibt und keine unnötigen Serverkosten produziert. CRM, Video-Engine, Lead-Tracking und Follow-ups bleiben nativ im JJ-Media-System.
+        <strong>Modular statt schwerfällig:</strong> Self-hosted Tools werden nur dann zugeschaltet, wenn sie einen echten Mehrwert liefern. CRM, Video-Engine, Lead-Tracking und Follow-ups bleiben nativ im JJ-Media-System; externe Services ergänzen die Daten- und Automationsschicht.
       </section>
     </AdminShell>
   );
