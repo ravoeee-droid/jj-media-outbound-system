@@ -4,6 +4,15 @@ import { FormEvent, useState } from "react";
 import styles from "./CockpitLogin.module.css";
 
 const BASE_PATH = "/admin";
+const PROTECTED_ROOTS = ["/dashboard", "/system", "/telegram", "/renderer-status"];
+
+function safeAdminTarget(value: string | null) {
+  if (!value || !value.startsWith(`${BASE_PATH}/`)) return `${BASE_PATH}/dashboard`;
+  const scoped = value.slice(BASE_PATH.length);
+  return PROTECTED_ROOTS.some((root) => scoped === root || scoped.startsWith(`${root}/`) || scoped.startsWith(`${root}?`) || scoped.startsWith(`${root}#`))
+    ? value
+    : `${BASE_PATH}/dashboard`;
+}
 
 export default function CockpitLogin() {
   const [password, setPassword] = useState("");
@@ -23,8 +32,7 @@ export default function CockpitLogin() {
       const payload = await response.json() as { error?: string };
       if (!response.ok) throw new Error(payload.error || "Anmeldung fehlgeschlagen.");
       const requested = new URLSearchParams(window.location.search).get("next");
-      const target = requested?.startsWith(`${BASE_PATH}/dashboard`) ? requested : `${BASE_PATH}/dashboard`;
-      window.location.assign(target);
+      window.location.assign(safeAdminTarget(requested));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Anmeldung fehlgeschlagen.");
       setLoading(false);
