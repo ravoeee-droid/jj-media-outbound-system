@@ -2,15 +2,8 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
+const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
+const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "JJ-Media Growth OS",
@@ -23,11 +16,15 @@ export const metadata: Metadata = {
 const basePathBridge = `
 (function () {
   var BASE = '/admin';
+  var APP_ROOTS = ['/dashboard', '/login', '/system', '/telegram', '/renderer-status'];
   var scope = function (value) {
-    if (typeof value !== 'string' || !value.startsWith('/')) return value;
-    if (value === BASE || value.startsWith(BASE + '/')) return value;
-    if (value.startsWith('/api/')) return BASE + value;
-    if (/^\/(dashboard|login|system|telegram|renderer-status)(\/|$|\?|#)/.test(value)) return BASE + value;
+    if (typeof value !== 'string' || value.charAt(0) !== '/') return value;
+    if (value === BASE || value.indexOf(BASE + '/') === 0) return value;
+    if (value.indexOf('/api/') === 0) return BASE + value;
+    for (var i = 0; i < APP_ROOTS.length; i += 1) {
+      var root = APP_ROOTS[i];
+      if (value === root || value.indexOf(root + '/') === 0 || value.indexOf(root + '?') === 0 || value.indexOf(root + '#') === 0) return BASE + value;
+    }
     return value;
   };
   if (!window.__jjAdminBasePathInstalled) {
