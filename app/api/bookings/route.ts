@@ -22,9 +22,13 @@ export async function POST(request: Request) {
       db.update(leads).set({ pipelineStage: "call_booked", probability: Math.max(lead.probability, 60), lastActivityAt: new Date(), updatedAt: new Date() }).where(eq(leads.id, lead.id)),
       db.insert(events).values({ leadId: lead.id, type: "booking", metadata: { bookingId: booking.id } }),
     ]);
-    const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || process.env.NEXTAUTH_URL || process.env.AUTH_URL || new URL(request.url).origin).replace(/\/$/, "");
-    await sendTelegramMessage(`🎯 Neuer Termin gebucht\n\nUnternehmen: ${lead.company}\nKontakt: ${lead.contact || "noch offen"}\nE-Mail: ${lead.email || "fehlt"}\nTermin: ${new Date(input.scheduledAt).toLocaleString("de-DE")}\n\n${baseUrl}/v/${lead.slug}`, {
-      buttons: [[{ text: "CRM öffnen ↗", url: `${baseUrl}/dashboard#leads` }, { text: "Landingpage ↗", url: `${baseUrl}/v/${lead.slug}` }]],
+
+    const publicBaseUrl = (process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_APP_URL || process.env.NEXTAUTH_URL || process.env.AUTH_URL || new URL(request.url).origin).replace(/\/$/, "").replace(/\/admin$/, "");
+    const landingUrl = `${publicBaseUrl}/v/${lead.slug}`;
+    const crmUrl = `${publicBaseUrl}/admin/dashboard#leads`;
+
+    await sendTelegramMessage(`🎯 Neuer Termin gebucht\n\nUnternehmen: ${lead.company}\nKontakt: ${lead.contact || "noch offen"}\nE-Mail: ${lead.email || "fehlt"}\nTermin: ${new Date(input.scheduledAt).toLocaleString("de-DE")}\n\n${landingUrl}`, {
+      buttons: [[{ text: "CRM öffnen ↗", url: crmUrl }, { text: "Landingpage ↗", url: landingUrl }]],
     });
     return Response.json({ booking }, { status: 201 });
   } catch (error) {
