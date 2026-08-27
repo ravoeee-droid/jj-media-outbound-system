@@ -82,9 +82,7 @@ if (existingConfig) {
     writeFileSync(
       join(root, existingConfig),
       `import baseConfig from "./${baseName.replace(/\.ts$/, "")}";\n\n` +
-        `const withAdminBasePath = typeof baseConfig === "function"\n` +
-        `  ? (...args: any[]) => ({ ...baseConfig(...args), basePath: "/admin" })\n` +
-        `  : { ...baseConfig, basePath: "/admin" };\n\n` +
+        `const withAdminBasePath = { ...baseConfig, basePath: "/admin" };\n\n` +
         `export default withAdminBasePath;\n`,
     );
   } else if (isEsm) {
