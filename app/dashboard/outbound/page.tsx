@@ -1,18 +1,21 @@
 import Link from "next/link";
 import AdminShell from "../../components/AdminShell";
 import OutboundDashboard from "../../components/OutboundDashboard";
+import styles from "./OutboundEmbed.module.css";
 
 export default function OutboundPage() {
   return (
     <AdminShell
       active="outbound"
-      eyebrow="Akquise Engine"
-      title="Leads rein. Persönliche Videos raus."
-      description="Hier bleibt der komplette bestehende Outbound-Workflow erhalten: Lead-Import, Social-Screenshot, Loom-Style MP4, Landingpage, Versand, Follow-ups und CRM-Akte."
-      actions={<Link href="/dashboard">← Command Center</Link>}
+      eyebrow="Outbound Workspace"
+      title="Personalisierte Akquise. Ohne Tool-Chaos."
+      description="Leads importieren, Social-Profile vorbereiten, personalisierte Analysevideos erstellen, versenden und nachfassen – in einem durchgängigen Workflow."
+      actions={<><Link href="/dashboard">Command Center</Link><Link href="/dashboard/integrations">Verbindungen prüfen</Link></>}
       wide
     >
-      <OutboundDashboard userName="JJ-Media" />
+      <div className={styles.embed}>
+        <OutboundDashboard userName="JJ-Media" />
+      </div>
     </AdminShell>
   );
 }
