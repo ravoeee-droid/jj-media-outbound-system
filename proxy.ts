@@ -13,6 +13,7 @@ const publicApiPrefixes = [
   "/api/internal/website-capture",
   "/api/internal/social-profile-capture",
   "/api/preview/",
+  "/api/renderer-health",
   "/api/cron/automation",
   "/api/telegram/webhook",
 ];
