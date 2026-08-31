@@ -4,6 +4,8 @@ const PROJECT_URL = "https://dessavbytgxyygeohjrn.supabase.co";
 const BUCKET = "jj-media-outbound";
 const BROKER_URL = `${PROJECT_URL}/functions/v1/jj-media-storage-broker`;
 
+type UploadBody = BodyInit | Uint8Array | Buffer;
+
 async function broker<T>(payload: Record<string, unknown>): Promise<T> {
   const oidcToken = await getVercelOidcToken();
   if (!oidcToken) throw new Error("Vercel OIDC ist für den sicheren Medienspeicher nicht verfügbar.");
@@ -49,7 +51,7 @@ export async function createMediaUpload(path: string) {
   return broker<{ signedUrl: string; token: string; path: string }>({ action: "sign_upload", path: clean });
 }
 
-export async function uploadMedia(path: string, body: BodyInit, contentType: string) {
+export async function uploadMedia(path: string, body: UploadBody, contentType: string) {
   const clean = cleanPath(path);
   const signed = await createMediaUpload(clean);
   const response = await fetch(signed.signedUrl, {
@@ -59,7 +61,7 @@ export async function uploadMedia(path: string, body: BodyInit, contentType: str
       "cache-control": "max-age=3600",
       "x-upsert": "true",
     },
-    body,
+    body: body as BodyInit,
   });
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
