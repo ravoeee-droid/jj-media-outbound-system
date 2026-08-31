@@ -1,11 +1,11 @@
 import { and, desc, eq } from "drizzle-orm";
-import { del, get, put } from "@vercel/blob";
 import sharp from "sharp";
 import { z } from "zod";
 import { getDb } from "@/db";
 import { activities, assets, jobs, leads, settings } from "@/db/schema";
 import { parseLandingStudioConfig } from "@/lib/landing-studio";
 import { internalCaptureHeader } from "@/lib/internal-capture-auth";
+import { deleteMedia, downloadMedia, uploadMedia } from "@/lib/media-store";
 import { renderLeadVideo } from "@/lib/video-renderer";
 import { sendTelegramMessage } from "@/lib/telegram";
 import { apiError, requireWorkspace } from "@/lib/workspace";
@@ -112,9 +112,8 @@ export async function POST(request: Request) {
     let screenshot: Buffer;
     let capture = { consentClicks: 0, hiddenOverlays: 0, source: "upload" as "upload" | "instagram" };
     if (manualProfilePreview) {
-      const stored = await get(manualProfilePreview.blobUrl || manualProfilePreview.pathname, { access: "private", useCache: false });
-      if (!stored?.stream) throw new Error("Der hinterlegte Instagram-Screenshot konnte nicht geladen werden.");
-      screenshot = Buffer.from(await new Response(stored.stream).arrayBuffer());
+      const stored = await downloadMedia(manualProfilePreview.pathname || manualProfilePreview.blobUrl);
+      screenshot = Buffer.from(await stored.arrayBuffer());
     } else {
       const automaticCapture = await captureSocialProfile(request, lead.websiteUrl);
       screenshot = automaticCapture.buffer;
@@ -127,11 +126,7 @@ export async function POST(request: Request) {
       .webp({ quality: 82, effort: 4 })
       .toBuffer();
     const screenshotPathname = `workspaces/${workspace.workspaceId}/leads/${lead.slug}/instagram-profile-${Date.now()}.webp`;
-    const screenshotBlob = await put(screenshotPathname, optimized, {
-      access: "private",
-      contentType: "image/webp",
-      addRandomSuffix: false,
-    });
+    const screenshotBlob = await uploadMedia(screenshotPathname, optimized, "image/webp");
     await db.insert(assets).values({
       workspaceId: workspace.workspaceId,
       kind: "social_profile_preview",
@@ -159,11 +154,7 @@ export async function POST(request: Request) {
     });
     const renderedKind = `rendered_video:${lead.id}`;
     const renderedPathname = `workspaces/${workspace.workspaceId}/leads/${lead.slug}/final-${Date.now()}.mp4`;
-    const renderedBlob = await put(renderedPathname, rendered.buffer, {
-      access: "private",
-      contentType: rendered.contentType,
-      addRandomSuffix: false,
-    });
+    const renderedBlob = await uploadMedia(renderedPathname, rendered.buffer, rendered.contentType);
     const [renderedAsset] = await db
       .insert(assets)
       .values({
@@ -179,7 +170,7 @@ export async function POST(request: Request) {
 
     const staleRenders = assetRows.filter((asset) => asset.kind === renderedKind && asset.id !== renderedAsset.id);
     for (const stale of staleRenders) {
-      await del(stale.blobUrl).catch(() => undefined);
+      await deleteMedia(stale.pathname || stale.blobUrl).catch(() => undefined);
       await db
         .delete(assets)
         .where(and(eq(assets.id, stale.id), eq(assets.workspaceId, workspace.workspaceId)));
