@@ -14,6 +14,7 @@ const publicApiPrefixes = [
   "/api/internal/social-profile-capture",
   "/api/preview/",
   "/api/renderer-health",
+  "/api/runtime-capabilities",
   "/api/cron/automation",
   "/api/telegram/webhook",
 ];
