@@ -2,6 +2,13 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
   "regions": ["fra1"],
+  "redirects": [
+    {
+      "source": "/",
+      "destination": "/admin/dashboard",
+      "permanent": false
+    }
+  ],
   "crons": [
     {
       "path": "/api/cron/automation",
