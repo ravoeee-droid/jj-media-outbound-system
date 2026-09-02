@@ -1,12 +1,10 @@
 import { and, asc, count, desc, eq, gt, inArray, sql } from "drizzle-orm";
-import { get as getBlob } from "@vercel/blob";
 import { getDb } from "@/db";
 import { activities, assets, leads, settings, tasks, whatsappMessages, whatsappQueue, whatsappThreads, workspaces } from "@/db/schema";
 import { draftReply, type AgentDecision, type ChatLine } from "./ai";
 import { availableSlots, bookSlot, localClock } from "./calendar";
 import { getAgentConfig, withLease } from "./config";
 import { chosenSlot, effectiveMode, isOptOut, isSuppressed, normalizePhone, requiresHuman, type AgentMode, type CalendarSlot } from "./policy";
-import { bridgeConfigured, deliveryStatus, sendThroughBridge } from "./provider";
 import { requireSecureAccess } from "./access";
 
 export async function threadRecord(workspaceId: string, threadId: string) {
@@ -142,17 +140,6 @@ async function deliver(args: { workspaceId: string; threadId: string; messageId:
   if (!message) throw new Error("Nachricht nicht gefunden.");
   if (["sent", "delivered", "read"].includes(message.status)) return message;
   if (message.status !== "draft") throw new Error("Der Versandstatus ist noch unklar. Bitte zuerst in WhatsApp prüfen; die Nachricht wird nicht erneut verschickt.");
-  if (!bridgeConfigured()) throw new Error("WhatsApp ist noch nicht verbunden.");
-  let attachment: { dataUrl: string; filename: string; mime: string } | undefined;
-  if (typeof message.metadata.attachmentId === "string") {
-    const [asset] = await db.select().from(assets).where(and(eq(assets.workspaceId, args.workspaceId), eq(assets.id, message.metadata.attachmentId), inArray(assets.kind, ["whatsapp_image", "whatsapp_document", "whatsapp_audio"]))).limit(1);
-    if (!asset || asset.size > 3 * 1024 * 1024) throw new Error("Der ausgewählte Anhang ist nicht verfügbar.");
-    const file = await getBlob(asset.blobUrl, { access: "private" });
-    if (!file?.stream) throw new Error("Der Anhang konnte nicht geladen werden.");
-    const buffer = Buffer.from(await new Response(file.stream).arrayBuffer());
-    if (buffer.length > 3 * 1024 * 1024) throw new Error("Der Anhang überschreitet 3 MB.");
-    attachment = { dataUrl: `data:${asset.contentType};base64,${buffer.toString("base64")}`, filename: asset.filename, mime: asset.contentType };
-  }
   // Recheck the stop switch after potentially slow attachment loading.
   const fresh = await threadRecord(args.workspaceId, args.threadId);
   canContact(fresh.thread, fresh.lead);
@@ -161,20 +148,11 @@ async function deliver(args: { workspaceId: string; threadId: string; messageId:
     const latest = await getAgentConfig(args.workspaceId);
     if (!latest.enabled || latest.version !== args.configVersion || (args.actor === "agent" && effectiveMode(latest, fresh.thread.mode) !== "autopilot") || (args.actor === "outreach" && (!latest.dailyOutreachEnabled || fresh.thread.status !== "open"))) throw new Error("Der automatische Versand wurde angehalten.");
   }
-  const [claimed] = await db.update(whatsappMessages).set({ status: "sending", updatedAt: new Date() }).where(and(eq(whatsappMessages.id, message.id), eq(whatsappMessages.workspaceId, args.workspaceId), eq(whatsappMessages.status, "draft"))).returning();
+  const queuedAt = new Date().toISOString();
+  const [claimed] = await db.update(whatsappMessages).set({ status: "sending", metadata: { ...message.metadata, workerQueuedAt: queuedAt }, updatedAt: new Date() }).where(and(eq(whatsappMessages.id, message.id), eq(whatsappMessages.workspaceId, args.workspaceId), eq(whatsappMessages.status, "draft"))).returning();
   if (!claimed) throw new Error("Diese Nachricht wird bereits verarbeitet.");
-  let providerId: string;
-  try {
-    providerId = await sendThroughBridge({ id: message.id, to: thread.phone, body: message.body, attachment });
-  } catch (error) {
-    await db.update(whatsappMessages).set({ status: "unknown", metadata: { ...message.metadata, error: error instanceof Error ? error.message : "Versandstatus unklar" }, updatedAt: new Date() }).where(and(eq(whatsappMessages.id, message.id), eq(whatsappMessages.workspaceId, args.workspaceId)));
-    throw error;
-  }
-  const [sent] = await db.update(whatsappMessages).set({ status: "sent", providerId, sentAt: new Date(), updatedAt: new Date() }).where(and(eq(whatsappMessages.id, message.id), eq(whatsappMessages.workspaceId, args.workspaceId))).returning();
-  await db.update(whatsappThreads).set({ lastMessageAt: new Date(), version: sql`${whatsappThreads.version} + 1`, ...(args.actor === "human" ? { mode: "manual" as const } : {}), ...(Array.isArray(message.metadata.slots) ? { offeredSlots: message.metadata.slots as CalendarSlot[] } : {}), updatedAt: new Date() }).where(and(eq(whatsappThreads.id, thread.id), eq(whatsappThreads.workspaceId, args.workspaceId)));
-  await db.update(leads).set({ lastContactAt: new Date(), lastActivityAt: new Date(), updatedAt: new Date(), ...(lead.pipelineStage === "new" ? { pipelineStage: "contacted" } : {}) }).where(and(eq(leads.id, lead.id), eq(leads.workspaceId, args.workspaceId)));
-  await activity(args.workspaceId, lead.id, "WhatsApp gesendet", message.body, { messageId: message.id, providerId, actor: args.actor });
-  return sent;
+  await db.update(whatsappQueue).set({ status: "sending", error: "Wartet auf WhatsApp-Laptop", updatedAt: new Date() }).where(and(eq(whatsappQueue.workspaceId, args.workspaceId), eq(whatsappQueue.messageId, message.id)));
+  return claimed;
 }
 
 export async function sendManual(args: { workspaceId: string; threadId: string; body: string; key: string; expectedVersion: number; attachmentId?: string; draftId?: string }) {
@@ -183,7 +161,7 @@ export async function sendManual(args: { workspaceId: string; threadId: string; 
     const existing = await db.select().from(whatsappMessages).where(and(eq(whatsappMessages.workspaceId, args.workspaceId), eq(whatsappMessages.idempotencyKey, `manual:${args.key}`))).limit(1);
     if (existing[0]) {
       if (existing[0].threadId !== args.threadId || existing[0].body !== args.body || (existing[0].metadata.attachmentId || undefined) !== args.attachmentId) throw new Error("Dieser Versandvorgang gehört zu einer anderen Nachricht.");
-      if (["sent", "delivered", "read"].includes(existing[0].status)) return existing[0];
+      if (["sending", "unknown", "sent", "delivered", "read"].includes(existing[0].status)) return existing[0];
       return deliver({ ...args, messageId: existing[0].id, actor: "human" });
     }
     const { thread, lead } = await threadRecord(args.workspaceId, args.threadId);
@@ -203,20 +181,10 @@ export async function sendManual(args: { workspaceId: string; threadId: string; 
 }
 
 export async function reconcileMessage(workspaceId: string, messageId: string) {
-  const db = getDb();
-  const [message] = await db.select().from(whatsappMessages).where(and(eq(whatsappMessages.workspaceId, workspaceId), eq(whatsappMessages.id, messageId), eq(whatsappMessages.direction, "outbound"))).limit(1);
+  const [message] = await getDb().select().from(whatsappMessages).where(and(eq(whatsappMessages.workspaceId, workspaceId), eq(whatsappMessages.id, messageId), eq(whatsappMessages.direction, "outbound"))).limit(1);
   if (!message || !["unknown", "sending"].includes(message.status)) throw new Error("Für diese Nachricht ist keine Statusprüfung erforderlich.");
-  const result = await deliveryStatus(message.id);
-  if (result.status === "sent" && result.providerId) {
-    await db.update(whatsappMessages).set({ status: "sent", providerId: result.providerId, sentAt: new Date(), updatedAt: new Date() }).where(and(eq(whatsappMessages.workspaceId, workspaceId), eq(whatsappMessages.id, message.id)));
-    await db.update(whatsappQueue).set({ status: "sent", sentAt: new Date(), error: "", updatedAt: new Date() }).where(and(eq(whatsappQueue.workspaceId, workspaceId), eq(whatsappQueue.messageId, message.id)));
-    const { thread, lead } = await threadRecord(workspaceId, message.threadId);
-    await db.update(whatsappThreads).set({ lastMessageAt: new Date(), version: sql`${whatsappThreads.version} + 1`, ...(message.metadata.actor === "human" ? { mode: "manual" as const } : {}), ...(thread.consent === "granted" && Array.isArray(message.metadata.slots) ? { offeredSlots: message.metadata.slots as CalendarSlot[] } : {}), updatedAt: new Date() }).where(and(eq(whatsappThreads.workspaceId, workspaceId), eq(whatsappThreads.id, thread.id)));
-    await db.update(leads).set({ lastContactAt: new Date(), lastActivityAt: new Date(), updatedAt: new Date() }).where(and(eq(leads.workspaceId, workspaceId), eq(leads.id, lead.id)));
-    return { status: "sent", message: "WhatsApp hat den Versand bestätigt." };
-  }
-  // Unknown is never blindly resent. The durable bridge is the source of truth.
-  return { status: result.status, message: result.status === "not_found" ? "Der Server kennt diese Nachricht nicht. Bitte in WhatsApp prüfen, bevor Sie einen neuen Versand starten." : "Der Status ist weiterhin unklar. Bitte direkt in WhatsApp prüfen." };
+  if (message.status === "sending") return { status: "sending", message: "Die Nachricht wartet auf den verbundenen WhatsApp-Laptop. Sie wird nicht doppelt versendet." };
+  return { status: "unknown", message: "Der Versandstatus ist unklar. Bitte direkt in WhatsApp prüfen; die Nachricht wird aus Sicherheitsgründen nicht automatisch erneut gesendet." };
 }
 
 async function followUp(workspaceId: string, threadId: string, date: string, sourceId: string) {
@@ -317,11 +285,25 @@ export async function createReply(workspaceId: string, threadId: string, automat
 
 export async function receiveMessage(workspaceId: string, input: { id: string; phone: string; body: string; kind: string; timestamp: string; fromMe?: boolean }) {
   const phone = normalizePhone(input.phone);
-  if (!phone || input.fromMe) return { ignored: true };
+  if (!phone) return { ignored: true };
   const db = getDb();
   const [thread] = await db.select().from(whatsappThreads).where(and(eq(whatsappThreads.workspaceId, workspaceId), eq(whatsappThreads.phone, phone))).limit(1);
-  // Never ingest private chats or scraped contacts outside the selected CRM contacts.
+  // Never ingest private chats, groups or contacts outside the selected CRM contacts.
   if (!thread) return { ignored: true };
+  const [known] = await db.select({ id: whatsappMessages.id }).from(whatsappMessages).where(and(eq(whatsappMessages.workspaceId, workspaceId), eq(whatsappMessages.providerId, input.id))).limit(1);
+  if (known) return { received: true, duplicate: true };
+
+  if (input.fromMe) {
+    const [message] = await db.insert(whatsappMessages).values({ workspaceId, threadId: thread.id, direction: "outbound", status: "sent", body: input.body, kind: input.kind, providerId: input.id, idempotencyKey: `phone:${input.id}`, metadata: { actor: "phone", providerTimestamp: input.timestamp }, sentAt: new Date(input.timestamp) }).onConflictDoNothing().returning();
+    if (message) {
+      await db.update(whatsappThreads).set({ lastMessageAt: new Date(), mode: "manual", version: sql`${whatsappThreads.version} + 1`, updatedAt: new Date() }).where(and(eq(whatsappThreads.workspaceId, workspaceId), eq(whatsappThreads.id, thread.id)));
+      const { lead } = await threadRecord(workspaceId, thread.id);
+      await db.update(leads).set({ lastContactAt: new Date(), lastActivityAt: new Date(), updatedAt: new Date(), ...(lead.pipelineStage === "new" ? { pipelineStage: "contacted" } : {}) }).where(and(eq(leads.workspaceId, workspaceId), eq(leads.id, lead.id)));
+      await activity(workspaceId, thread.leadId, "WhatsApp vom Handy gesendet", input.body, { messageId: message.id, providerId: input.id });
+    }
+    return { received: true, fromMe: true, duplicate: !message };
+  }
+
   const [message] = await db.insert(whatsappMessages).values({ workspaceId, threadId: thread.id, direction: "inbound", status: "received", body: input.body, kind: input.kind, providerId: input.id, idempotencyKey: `inbound:${input.id}`, metadata: { providerTimestamp: input.timestamp } }).onConflictDoNothing().returning();
   if (message) {
     await db.update(whatsappThreads).set({ lastInboundId: message.id, lastMessageAt: new Date(), unread: true, version: sql`${whatsappThreads.version} + 1`, updatedAt: new Date() }).where(and(eq(whatsappThreads.workspaceId, workspaceId), eq(whatsappThreads.id, thread.id)));
@@ -337,7 +319,6 @@ export async function receiveMessage(workspaceId: string, input: { id: string; p
   if (requiresHuman(input.body)) { await handoff(workspaceId, thread.id, "Der Kontakt möchte eine persönliche Bearbeitung oder verhandeln."); return { handoff: true }; }
   try { await createReply(workspaceId, thread.id, true); }
   catch (error) {
-    // Busy means another turn owns this conversation; the next bridge tick recovers it.
     if (!(error instanceof Error && error.message.includes("gerade verarbeitet"))) await handoff(workspaceId, thread.id, error instanceof Error ? error.message : "KI-Antwort bitte prüfen");
   }
   return { received: true, duplicate: !message };
@@ -355,7 +336,7 @@ export async function runDailyOutreach(workspaceId: string) {
     const db = getDb();
     const config = await getAgentConfig(workspaceId);
     const clock = localClock(new Date(), config.timezone);
-    if (!config.enabled || !config.dailyOutreachEnabled || !bridgeConfigured()) return { sent: 0, reason: "paused" };
+    if (!config.enabled || !config.dailyOutreachEnabled) return { sent: 0, reason: "paused" };
     if (!config.weekdays.includes(clock.weekday) || clock.hour < config.outreachStartHour || clock.hour >= config.outreachEndHour) return { sent: 0, reason: "outside_hours" };
     const rows = await db.select().from(whatsappQueue).where(and(eq(whatsappQueue.workspaceId, workspaceId), gt(whatsappQueue.attemptedAt, new Date(Date.now() - 36 * 3_600_000))));
     const today = rows.filter((row) => row.attemptedAt && localClock(row.attemptedAt, config.timezone).day === clock.day);
@@ -382,8 +363,7 @@ export async function runDailyOutreach(workspaceId: string) {
         const [stillQueued] = await db.update(whatsappQueue).set({ status: "sending", messageId: message.id, attemptedAt: new Date(), updatedAt: new Date() }).where(and(eq(whatsappQueue.workspaceId, workspaceId), eq(whatsappQueue.id, queued.id), eq(whatsappQueue.status, "queued"))).returning();
         if (!stillQueued) return { sent: 0, reason: "cancelled" };
         await deliver({ workspaceId, threadId: thread.id, messageId: message.id, actor: "outreach", expectedVersion: Number(message.metadata.threadVersion), configVersion: Number(message.metadata.configVersion) });
-        await db.update(whatsappQueue).set({ status: "sent", sentAt: new Date(), updatedAt: new Date() }).where(eq(whatsappQueue.id, queued.id));
-        return { sent: 1, reason: "sent" };
+        return { sent: 0, queued: 1, reason: "queued_to_laptop" };
       });
     } catch (error) {
       const [message] = await db.select().from(whatsappMessages).where(and(eq(whatsappMessages.workspaceId, workspaceId), eq(whatsappMessages.idempotencyKey, `outreach:${thread.id}`))).limit(1);

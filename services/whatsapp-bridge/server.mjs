@@ -1,121 +1,244 @@
-import { createServer } from "node:http";
-import { mkdirSync } from "node:fs";
-import { join } from "node:path";
-import { createRequire } from "node:module";
-import { authorized, BridgeError, incomingMessage, Ledger, signature, validateSend } from "./core.mjs";
+import makeWASocket, { DisconnectReason, useMultiFileAuthState } from "@whiskeysockets/baileys";
+import { existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import pino from "pino";
+import QRCode from "qrcode";
+import qrcodeTerminal from "qrcode-terminal";
 
-const require = createRequire(import.meta.url);
-const { create, ev } = require("@open-wa/wa-automate");
-const key = process.env.WHATSAPP_BRIDGE_KEY || "";
-const secret = process.env.WHATSAPP_WEBHOOK_SECRET || "";
-const workspaceId = process.env.WHATSAPP_WORKSPACE_ID || "";
-const webhook = new URL(process.env.WHATSAPP_WEBHOOK_URL || "http://invalid");
-if (key.length < 32 || secret.length < 32 || !/^[a-f0-9-]{36}$/i.test(workspaceId) || webhook.protocol !== "https:") throw new Error("Configure bridge key, webhook secret, workspace ID and HTTPS webhook URL before starting.");
-const directory = process.env.DATA_DIR || "./data";
-mkdirSync(directory, { recursive: true, mode: 0o700 });
-const ledger = new Ledger(join(directory, "delivery.sqlite"));
-let client;
+const root = dirname(fileURLToPath(import.meta.url));
+const dataDir = join(root, "data");
+const authDir = join(dataDir, "auth");
+const configPath = join(dataDir, "config.json");
+const ledgerPath = join(dataDir, "send-ledger.json");
+const pidPath = join(dataDir, "worker.pid");
+mkdirSync(dataDir, { recursive: true });
+mkdirSync(authDir, { recursive: true });
+
+if (!existsSync(configPath)) {
+  console.error("Noch nicht eingerichtet. Bitte zuerst INSTALL-WHATSAPP.bat ausführen.");
+  process.exit(1);
+}
+const config = JSON.parse(readFileSync(configPath, "utf8"));
+if (!config.baseUrl || !config.cookie || !config.workerId) throw new Error("Lokale Konfiguration unvollständig. INSTALL-WHATSAPP.bat erneut ausführen.");
+
+function acquirePid() {
+  if (existsSync(pidPath)) {
+    const old = Number(readFileSync(pidPath, "utf8"));
+    if (Number.isInteger(old) && old > 0) {
+      try { process.kill(old, 0); console.error("JJ-Media WhatsApp läuft bereits."); process.exit(0); } catch { /* stale pid */ }
+    }
+  }
+  writeFileSync(pidPath, String(process.pid));
+}
+acquirePid();
+
+let ledger = {};
+try { ledger = JSON.parse(readFileSync(ledgerPath, "utf8")); } catch { ledger = {}; }
+function saveLedger() {
+  const entries = Object.entries(ledger).sort((a, b) => String(b[1]?.updatedAt || "").localeCompare(String(a[1]?.updatedAt || ""))).slice(0, 2000);
+  ledger = Object.fromEntries(entries);
+  const tmp = `${ledgerPath}.tmp`;
+  writeFileSync(tmp, JSON.stringify(ledger, null, 2), { encoding: "utf8", mode: 0o600 });
+  rmSync(ledgerPath, { force: true });
+  writeFileSync(ledgerPath, readFileSync(tmp));
+  rmSync(tmp, { force: true });
+}
+
+async function api(payload, timeout = 30_000) {
+  const response = await fetch(`${config.baseUrl}/admin/api/whatsapp/worker`, { method: "POST", headers: { "content-type": "application/json", cookie: `dg_cockpit=${config.cookie}` }, body: JSON.stringify(payload), redirect: "error", signal: AbortSignal.timeout(timeout) });
+  if (response.status === 401) throw new Error("Laptop-Anmeldung abgelaufen oder geändert. INSTALL-WHATSAPP.bat erneut ausführen.");
+  const value = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(value.error || `Outbound Tool meldet HTTP ${response.status}`);
+  return value;
+}
+
+function digitsFromJid(jid) {
+  if (typeof jid !== "string" || !jid.endsWith("@s.whatsapp.net")) return "";
+  return jid.slice(0, -"@s.whatsapp.net".length).split(":")[0].replace(/\D/g, "");
+}
+function phoneFromKey(key) {
+  const alt = digitsFromJid(key?.remoteJidAlt);
+  return alt || digitsFromJid(key?.remoteJid);
+}
+function unwrap(input) {
+  let msg = input || {};
+  for (let i = 0; i < 4; i += 1) {
+    if (msg.ephemeralMessage?.message) { msg = msg.ephemeralMessage.message; continue; }
+    if (msg.viewOnceMessage?.message) { msg = msg.viewOnceMessage.message; continue; }
+    if (msg.viewOnceMessageV2?.message) { msg = msg.viewOnceMessageV2.message; continue; }
+    if (msg.documentWithCaptionMessage?.message) { msg = msg.documentWithCaptionMessage.message; continue; }
+    break;
+  }
+  return msg;
+}
+function messageContent(input) {
+  const msg = unwrap(input);
+  if (typeof msg.conversation === "string") return { kind: "text", body: msg.conversation };
+  if (typeof msg.extendedTextMessage?.text === "string") return { kind: "text", body: msg.extendedTextMessage.text };
+  if (msg.imageMessage) return { kind: "image", body: msg.imageMessage.caption || "" };
+  if (msg.audioMessage) return { kind: "audio", body: "" };
+  if (msg.videoMessage) return { kind: "video", body: msg.videoMessage.caption || "" };
+  if (msg.documentMessage) return { kind: "document", body: msg.documentMessage.caption || "" };
+  return { kind: "other", body: "" };
+}
+function receiptStatus(value) {
+  const n = Number(value);
+  if (n >= 4) return "read";
+  if (n >= 3) return "delivered";
+  if (n >= 2) return "sent";
+  return "";
+}
+function dataUrlBuffer(dataUrl) {
+  const match = String(dataUrl || "").match(/^data:([^;]+);base64,(.+)$/s);
+  if (!match) throw new Error("Ungültiger Anhang vom Outbound Tool.");
+  return { mime: match[1], buffer: Buffer.from(match[2], "base64") };
+}
+
+let sock = null;
 let connected = false;
 let phone = "";
-let qr = "";
-let qrAt = 0;
-let lastWebhookAt = null;
-let activeHooks = 0;
-let ticking = false;
+let qrData = "";
 let stopping = false;
+let pumpBusy = false;
+const inFlight = new Map();
+const logger = pino({ level: "silent" });
 
-function json(response, status, body) {
-  response.writeHead(status, { "content-type": "application/json", "cache-control": "no-store", "x-content-type-options": "nosniff" });
-  response.end(JSON.stringify(body));
+async function statusHeartbeat() {
+  try { await api({ action: "status", workerId: config.workerId, connected, phone, qr: connected ? "" : qrData, version: "baileys-6.7.24" }, 20_000); }
+  catch (error) { console.warn(`Status: ${error.message}`); }
 }
 
-const server = createServer(async (request, response) => {
-  if (!authorized(request.headers.authorization, key)) return json(response, 401, { error: "unauthorized" });
+function contentForSend(message) {
+  if (!message.attachment) return { text: message.body || "" };
+  const decoded = dataUrlBuffer(message.attachment.dataUrl);
+  const mime = message.attachment.mime || decoded.mime;
+  if (mime.startsWith("image/")) return { image: decoded.buffer, caption: message.body || undefined, mimetype: mime };
+  if (mime.startsWith("audio/")) return { audio: decoded.buffer, mimetype: mime, ptt: false };
+  return { document: decoded.buffer, mimetype: mime, fileName: message.attachment.filename || "Dokument", caption: message.body || undefined };
+}
+
+async function sendPulled(message) {
+  const previous = ledger[message.id];
+  if (previous?.status === "sent" && previous.providerId) {
+    await api({ action: "ack", workerId: config.workerId, messageId: message.id, status: "sent", providerId: previous.providerId });
+    return;
+  }
+  if (previous && ["sending", "unknown"].includes(previous.status)) {
+    await api({ action: "ack", workerId: config.workerId, messageId: message.id, status: "unknown", error: "Lokaler Versand war nach einem Neustart nicht eindeutig bestätigt; kein automatischer Neuversand." });
+    return;
+  }
+  ledger[message.id] = { status: "sending", to: message.to, body: message.body, updatedAt: new Date().toISOString() };
+  saveLedger();
+  inFlight.set(message.id, { to: message.to, body: message.body || "" });
   try {
-    const url = new URL(request.url, "http://localhost");
-    if (request.method === "GET" && url.pathname === "/health") return json(response, 200, { connected, phone, qr: !connected && Date.now() - qrAt < 90_000 ? qr : "", lastWebhookAt, pendingEvents: ledger.pending() });
-    if (request.method === "GET" && url.pathname === "/status") return json(response, 200, ledger.status(url.searchParams.get("id") || ""));
-    if (request.method !== "POST" || url.pathname !== "/send") return json(response, 404, { error: "not_found" });
-    if (Number(request.headers["content-length"] || 0) > 4_300_000) throw new BridgeError("payload_too_large", 413);
-    const chunks = []; let size = 0;
-    for await (const chunk of request) { size += chunk.length; if (size > 4_300_000) throw new BridgeError("payload_too_large", 413); chunks.push(chunk); }
-    let input;
-    try { input = validateSend(JSON.parse(Buffer.concat(chunks).toString("utf8"))); } catch (error) { if (error instanceof BridgeError) throw error; throw new BridgeError("invalid_json"); }
-    const previous = ledger.status(input.id);
-    if (previous.status === "not_found" && (!client || !connected || await client.getConnectionState() !== "CONNECTED")) throw new BridgeError("not_connected", 503);
-    const result = await ledger.sendOnce(input, async (message) => {
-      const to = `${message.to}@c.us`;
-      if (message.attachment) return client.sendFile(to, message.attachment.dataUrl, message.attachment.filename, message.body, undefined, true, false, message.attachment.mime === "application/pdf");
-      return client.sendText(to, message.body);
-    });
-    return json(response, result.status === "sent" ? 200 : 202, result);
-  } catch (error) { return json(response, error instanceof BridgeError ? error.status : 503, { error: error instanceof BridgeError ? error.message : "bridge_unavailable" }); }
-});
-server.requestTimeout = 30_000;
-server.headersTimeout = 10_000;
-server.listen(Number(process.env.PORT || 3001), "0.0.0.0");
+    const jid = `${String(message.to).replace(/\D/g, "")}@s.whatsapp.net`;
+    const result = await sock.sendMessage(jid, contentForSend(message));
+    const providerId = result?.key?.id;
+    if (!providerId) throw new Error("WhatsApp lieferte keine Nachrichten-ID.");
+    ledger[message.id] = { status: "sent", providerId, to: message.to, body: message.body, updatedAt: new Date().toISOString() };
+    saveLedger();
+    await api({ action: "ack", workerId: config.workerId, messageId: message.id, status: "sent", providerId });
+  } catch (error) {
+    ledger[message.id] = { status: "unknown", to: message.to, body: message.body, error: error.message, updatedAt: new Date().toISOString() };
+    saveLedger();
+    try { await api({ action: "ack", workerId: config.workerId, messageId: message.id, status: "unknown", error: error.message || "Versandstatus unklar" }); } catch { /* surfaced on next UI refresh */ }
+    throw error;
+  } finally {
+    inFlight.delete(message.id);
+  }
+}
 
-async function postWebhook(payload) {
-  return fetch(webhook, { method: "POST", headers: { "content-type": "application/json", ...signature(payload, secret) }, body: payload, redirect: "error", signal: AbortSignal.timeout(110_000) });
-}
-async function deliverHook(row) {
-  activeHooks++;
+async function pump() {
+  if (!connected || !sock || pumpBusy || stopping) return;
+  pumpBusy = true;
   try {
-    const response = await postWebhook(row.payload);
-    if (response.ok) { ledger.complete(row.id); lastWebhookAt = new Date().toISOString(); }
-    else { ledger.retry(row, response.status === 400 || response.status === 413); console.warn(`Webhook deferred (HTTP ${response.status}); inspect cockpit/connection settings.`); }
-  } catch { ledger.retry(row); }
-  finally { activeHooks--; }
+    const result = await api({ action: "pull", workerId: config.workerId }, 35_000);
+    if (result.message) await sendPulled(result.message);
+  } catch (error) {
+    console.warn(`Versand: ${error.message}`);
+  } finally { pumpBusy = false; }
 }
-const hookTimer = setInterval(() => {
+
+async function handleMessage(entry) {
+  const key = entry?.key || {};
+  const jid = key.remoteJid || "";
+  if (jid === "status@broadcast" || jid.endsWith("@g.us") || jid.endsWith("@newsletter")) return;
+  const phoneNumber = phoneFromKey(key);
+  if (!phoneNumber || !key.id) return;
+  const content = messageContent(entry.message);
+  if (content.kind === "other") return;
+  if (key.fromMe && [...inFlight.values()].some((row) => row.to === phoneNumber && row.body === content.body)) return;
+  if (key.fromMe && Object.values(ledger).some((row) => row?.providerId === key.id)) return;
+  try {
+    await api({ action: "event", workerId: config.workerId, id: key.id, phone: phoneNumber, body: content.body, kind: content.kind, timestamp: new Date(Number(entry.messageTimestamp || Date.now() / 1000) * 1000).toISOString(), fromMe: key.fromMe === true }, 40_000);
+  } catch (error) { console.warn(`Chat-Sync: ${error.message}`); }
+}
+
+async function connect() {
   if (stopping) return;
-  // Parallel delivery lets a STOP invalidate an earlier slow AI turn immediately.
-  while (activeHooks < 4) { const row = ledger.take(); if (!row) break; void deliverHook(row); }
-}, 1_000);
-const tickTimer = setInterval(async () => {
-  if (stopping || ticking || !connected) return;
-  ticking = true;
-  try { const response = await postWebhook(JSON.stringify({ event: "tick", workspaceId })); if (response.ok) lastWebhookAt = new Date().toISOString(); } catch { /* Next heartbeat retries; app jobs are idempotent. */ }
-  finally { ticking = false; }
-}, 60_000);
-const healthTimer = setInterval(async () => {
-  if (!client || stopping) return;
-  try { connected = await client.getConnectionState() === "CONNECTED"; } catch { connected = false; }
-}, 15_000);
-const cleanupTimer = setInterval(() => ledger.prune(), 3_600_000);
-
-ev.on("qr.**", (value) => {
-  if (typeof value === "string" && value.startsWith("data:image/png;base64,")) { qr = value; qrAt = Date.now(); connected = false; }
-});
-
-async function startWhatsApp() {
-  client = await create({
-    sessionId: "jj-media", sessionDataPath: directory, multiDevice: true,
-    headless: true, executablePath: process.env.CHROME_PATH || "/usr/bin/chromium",
-    qrTimeout: 0, authTimeout: 0, qrLogSkip: true, popup: false, disableSpins: true,
-    logConsole: false, logConsoleErrors: false, skipUpdateCheck: true, safeMode: true,
-    chromiumArgs: ["--no-sandbox", "--disable-dev-shm-usage"],
+  const { state, saveCreds } = await useMultiFileAuthState(authDir);
+  sock = makeWASocket({ auth: state, logger, markOnlineOnConnect: false, syncFullHistory: false, browser: ["JJ Media Outbound", "Chrome", "1.0.0"], generateHighQualityLinkPreview: false });
+  sock.ev.on("creds.update", saveCreds);
+  sock.ev.on("messages.upsert", ({ messages, type }) => {
+    if (type !== "notify") return;
+    for (const entry of messages || []) void handleMessage(entry);
   });
-  connected = await client.getConnectionState() === "CONNECTED";
-  phone = String(await client.getHostNumber()); qr = "";
-  await client.onStateChanged((state) => { connected = state === "CONNECTED"; if (connected) qr = ""; });
-  await client.onMessage((message) => {
-    const payload = incomingMessage(message, workspaceId);
-    if (payload) ledger.enqueue(`message:${payload.id}`, payload);
+  sock.ev.on("messages.update", (updates) => {
+    for (const row of updates || []) {
+      const providerId = row?.key?.id;
+      const status = receiptStatus(row?.update?.status);
+      if (providerId && status) void api({ action: "receipt", workerId: config.workerId, providerId, status }).catch(() => undefined);
+    }
   });
-  await client.onAck((message) => {
-    const status = Number(message.ack) >= 3 ? "read" : Number(message.ack) === 2 ? "delivered" : Number(message.ack) === 1 ? "sent" : null;
-    if (!status || typeof message.id !== "string") return;
-    // Give sendFile/sendText time to return their IDs before associating receipts.
-    setTimeout(() => { if (!stopping && ledger.hasProvider(message.id)) ledger.enqueue(`receipt:${message.id}:${status}`, { event: "receipt", workspaceId, providerId: message.id, status }); }, 5_000);
+  sock.ev.on("connection.update", async ({ connection, lastDisconnect, qr }) => {
+    if (qr) {
+      connected = false;
+      qrData = await QRCode.toDataURL(qr, { margin: 1, width: 360 });
+      console.log("\nWhatsApp verbinden: QR-Code scannen\n");
+      qrcodeTerminal.generate(qr, { small: true });
+      console.log("Alternativ: Outbound Tool → WhatsApp → Verbindungen.\n");
+      await statusHeartbeat();
+    }
+    if (connection === "open") {
+      connected = true;
+      phone = digitsFromJid(sock.user?.id || "");
+      qrData = "";
+      console.log(`✓ WhatsApp verbunden${phone ? ` (+${phone})` : ""}. Outbound Tool ist bereit.`);
+      await statusHeartbeat();
+      void api({ action: "tick", workerId: config.workerId }).catch(() => undefined);
+    }
+    if (connection === "close") {
+      connected = false;
+      const error = lastDisconnect?.error;
+      const code = Number(error?.output?.statusCode || error?.statusCode || error?.data?.statusCode || 0);
+      if (code === Number(DisconnectReason.loggedOut)) {
+        console.warn("WhatsApp wurde abgemeldet. Die lokale Kopplung wird zurückgesetzt.");
+        rmSync(authDir, { recursive: true, force: true });
+        mkdirSync(authDir, { recursive: true });
+      } else console.warn("WhatsApp-Verbindung getrennt – verbinde erneut …");
+      await statusHeartbeat();
+      if (!stopping) setTimeout(() => void connect().catch((err) => console.warn(err.message)), 2_500);
+    }
   });
-  console.info("JJ-Media WhatsApp bridge ready. Connection status is available in the cockpit.");
 }
-startWhatsApp().catch(() => { connected = false; console.error("WhatsApp session failed to start. Check server/browser configuration, then restart the bridge."); process.exitCode = 1; server.close(); for (const timer of [hookTimer, tickTimer, healthTimer, cleanupTimer]) clearInterval(timer); });
 
-for (const signal of ["SIGTERM", "SIGINT"]) process.once(signal, async () => {
-  stopping = true; for (const timer of [hookTimer, tickTimer, healthTimer, cleanupTimer]) clearInterval(timer);
-  server.close();
-  // A killed send remains unknown on restart, so it can never be submitted twice.
-  try { await client?.kill(); } finally { process.exit(0); }
-});
+const statusTimer = setInterval(() => void statusHeartbeat(), 20_000);
+const pumpTimer = setInterval(() => void pump(), 2_500);
+const tickTimer = setInterval(() => { if (connected && !stopping) void api({ action: "tick", workerId: config.workerId }, 110_000).catch((error) => console.warn(`Automatik: ${error.message}`)); }, 60_000);
+
+async function shutdown() {
+  if (stopping) return;
+  stopping = true;
+  clearInterval(statusTimer); clearInterval(pumpTimer); clearInterval(tickTimer);
+  connected = false; qrData = "";
+  try { await statusHeartbeat(); } catch { /* best effort */ }
+  try { unlinkSync(pidPath); } catch { /* best effort */ }
+  process.exit(0);
+}
+process.once("SIGINT", shutdown);
+process.once("SIGTERM", shutdown);
+process.once("exit", () => { try { unlinkSync(pidPath); } catch { /* best effort */ } });
+
+console.log("JJ-Media WhatsApp startet – kein Chromium, kein VPS, kein Tunnel.");
+connect().catch((error) => { console.error(error); shutdown(); });

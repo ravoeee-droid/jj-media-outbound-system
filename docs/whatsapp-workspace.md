@@ -1,80 +1,61 @@
-# WhatsApp im JJ-Media-Cockpit
+# WhatsApp im JJ-Media Outbound Tool
 
-Unter `/admin/dashboard/whatsapp` sind Inbox, Tageslauf, KI-Wissen und Verbindungen zusammengeführt. CRM und Lead-Liste verlinken direkt auf den jeweiligen WhatsApp-Kontakt.
+Unter `/admin/dashboard/whatsapp` liegen Inbox, Tageslauf, KI-Wissen und Verbindungen im bestehenden JJ-Media Outbound Tool.
 
-## Im Team einrichten
+## Ablauf
 
-1. **KI-Wissen & Regeln:** Angebote, Preise, Referenzen und Antwortbeispiele eintragen oder als TXT/Markdown importieren. Jeden Inhalt prüfen und freigeben. Geänderte Inhalte benötigen erneut eine Freigabe. Tonalität, Qualifizierungsfragen und Übergaberegeln festlegen. Der Testchat verwendet diese Einstellungen, verschickt aber keine Nachrichten und bucht keine Termine.
-2. **Verbindungen:** WhatsApp-Server anbinden, QR-Code am Smartphone scannen und den Google-Kalender über den vorhandenen OAuth-Zugang freigeben.
-3. **Inbox:** Lead auswählen, Telefonnummer überprüfen und Zustimmung mit Zeitpunkt, Quelle und Zweck dokumentieren. Zunächst Copilot nutzen: Entwurf prüfen, bearbeiten und senden. Eine manuelle Nachricht übernimmt die Unterhaltung für das Team.
-4. **Autopilot:** In den Regeln und für den jeweiligen Kontakt aktivieren. Die KI beantwortet belegbare Fragen, schlägt tatsächlich freie Zeiten vor und bucht erst nach eindeutiger Auswahl einer zuvor versendeten Option. Individuelle Preise, Beschwerden, Rückrufwünsche, Anhänge und Unsicherheiten gehen an das Team.
-5. **Tageslauf:** Geeignete Kontakte mit dokumentierter Zustimmung einzeln freigeben und den Lauf starten. Maximal 30 erste Nachrichten pro lokalem Kalendertag, innerhalb der eingestellten Wochentage und Stunden. Mindestens zwei Minuten Abstand; bei weniger geeigneten Kontakten wird weniger versendet. Antworten stoppen den Erstkontaktauftrag. Ein Lauf erteilt keine Zustimmung im Namen eines Kontakts und ändert dessen Antwortmodus nicht.
+1. Leads werden zuerst geprüft und angereichert.
+2. Erstkontakte landen vor dem Versand in der manuellen Freigabe. Der feste Einstieg lautet `Hallo, bin ich da bei <Unternehmensname> gelandet?`.
+3. Nur freigegebene Kontakte mit dokumentierter WhatsApp-Zustimmung können in den Tageslauf gehen.
+4. Der Tageslauf verschickt höchstens das eingestellte Tageslimit und mindestens drei Minuten auseinander. Antworten stoppen den offenen Erstkontakt.
+5. Nach einer Antwort folgt die Verkaufslogik Situation → Problem → Auswirkung → Priorität/Ziel → bisherige Versuche → Erlaubnis für Lösung. Pro Nachricht höchstens eine Frage.
+6. Opt-out, geschlossene Chats, Sperr-Tags oder menschliche Übernahme stoppen die Automatik.
 
-Das Wissen wird der KI passend zur Unterhaltung bereitgestellt. Hier werden keine Modellgewichte trainiert. Fehlende Fakten bleiben offen; Mustertexte für Preise und Referenzen sind deshalb anfangs nicht freigegeben.
+## Kostenloser Windows-Betrieb
 
-## Betrieb
+Der WhatsApp-Teil läuft auf Jessys Windows-Laptop mit `@whiskeysockets/baileys` 6.7.24. Baileys hält direkt eine WebSocket-Verbindung zu WhatsApp und benötigt keinen Browser/Chromium.
 
-Der Next.js-Teil bleibt auf dem vorhandenen Vercel-Projekt. OpenWA braucht einen dauerhaft laufenden Chromium-Prozess und läuft separat. In `services/whatsapp-bridge` liegen ein Node-24-Dienst, Dockerfile und Compose-Datei. Die Integration verwendet die veröffentlichten OpenWA-v4-APIs aus Version 4.76.0. Sie kann über den kleinen HTTP-Vertrag später durch einen anderen WhatsApp-Anbieter ersetzt werden.
+Architektur:
 
-### WhatsApp-Server
+`WhatsApp ↔ Baileys auf Jessys Laptop → HTTPS → JJ-Media Outbound Tool auf Vercel → Datenbank/KI/CRM`
 
-Auf einem Linux-Server mit Docker und einer HTTPS-Domain:
+Der Laptop öffnet keine Ports und benötigt weder VPS noch Cloudflare Tunnel. Das Outbound Tool versucht niemals, den Laptop direkt zu erreichen.
 
-```sh
-cd services/whatsapp-bridge
-cp bridge.env.example bridge.env
-# Zwei verschiedene Schlüssel erzeugen und in bridge.env eintragen:
-openssl rand -hex 32
-openssl rand -hex 32
-chmod 600 bridge.env
-docker compose up -d --build
-```
+### Einmalige Einrichtung
 
-`WHATSAPP_WEBHOOK_URL` ist die vollständige öffentliche Cockpit-Adresse mit `/admin/api/whatsapp/webhook`. Die Domain muss direkt die produktive App erreichen; vorgeschalteter Vercel-Deployment-Schutz darf diesen signierten Webhook nicht abweisen. Der normale Cockpit-Login bleibt geschützt.
+Im Ordner `services/whatsapp-bridge`:
 
-Port 3001 bindet nur an localhost. Ein bestehender HTTPS-Reverse-Proxy leitet die Bridge-Domain dorthin weiter. Alle Bridge-Endpunkte benötigen `Authorization: Bearer <WHATSAPP_BRIDGE_KEY>`. QR-Codes und Sitzungsdaten nicht veröffentlichen. Das Docker-Volume `whatsapp-session` erhält die Sitzung und das Versandjournal über Neustarts; regelmäßige geschützte Backups gehören zum Serverbetrieb.
+1. `INSTALL-WHATSAPP.bat` doppelklicken.
+2. Die vorgeschlagene Outbound-Tool-Adresse bestätigen.
+3. Das Outbound-Tool-Passwort eingeben. Das Klartextpasswort wird nicht gespeichert.
+4. Der Installer richtet Node.js bei Bedarf, die Abhängigkeiten und den Windows-Autostart ein.
+5. Danach WhatsApp → Einstellungen → Verknüpfte Geräte → Gerät hinzufügen und den QR-Code scannen. Der QR erscheint sowohl im lokalen Fenster als auch unter **WhatsApp → Verbindungen** im Outbound Tool.
 
-### Vercel-Umgebung
+Danach startet der Dienst automatisch bei der Windows-Anmeldung. Manuell kann er über `START-WHATSAPP.bat` gestartet und über `STOP-WHATSAPP.bat` gestoppt werden.
 
-| Variable | Wert |
-| --- | --- |
-| `WHATSAPP_BRIDGE_URL` | HTTPS-Basisadresse des WhatsApp-Servers ohne abschließenden Slash |
-| `WHATSAPP_BRIDGE_KEY` | Derselbe geheime Schlüssel wie auf dem Server, mindestens 32 Zeichen |
-| `WHATSAPP_WEBHOOK_SECRET` | Separater gemeinsamer HMAC-Schlüssel, mindestens 32 Zeichen |
-| `WHATSAPP_WORKSPACE_ID` | ID des bestehenden JJ-Media-Workspaces, siehe Beispielkonfiguration |
-| `WHATSAPP_AI_MODEL` | Optional: verfügbare Modell-ID im Vercel AI Gateway |
-| `AI_GATEWAY_API_KEY` | Optional, falls keine AI-Gateway-Freigabe per Vercel OIDC besteht |
+Lokale Sitzungsdaten und das Versandjournal liegen unter `services/whatsapp-bridge/data/` und sind von Git ausgeschlossen. Sie dürfen nicht geteilt werden.
 
-Vor Versand und Buchungen müssen `COCKPIT_PASSWORD` (mindestens 12 Zeichen) und `COCKPIT_AUTH_SECRET` (mindestens 32 zufällige Zeichen) gesetzt sein. Der bisherige Standardzugang reicht für diese Aktionen nicht aus. Nach Änderung der Variablen neu deployen und mit dem eigenen Passwort anmelden. Der AI Gateway muss für das Projekt freigeschaltet sein und Kontingent besitzen. Das Modell wird gegen die aktuelle Modellliste geprüft; ein fehlender Zugang oder ein erschöpftes Kontingent erzeugt einen sichtbaren Fehler und keine erfundene Antwort.
+## Versand-Sicherheit
 
-Google verwendet die vorhandenen Variablen `AUTH_GOOGLE_ID` und `AUTH_GOOGLE_SECRET`. Die Redirect-URI lautet `https://<Cockpit-Domain>/admin/api/gmail/callback`; `NEXT_PUBLIC_APP_URL` muss dieselbe öffentliche App-Basis enthalten. Zusätzlich zu den vorhandenen Mail-Berechtigungen werden für den Kalender `calendar.events` und `calendar.freebusy` angefragt. Eine erneute ausdrückliche Google-Freigabe ist erforderlich. Terminzeiten, Puffer, Vorlauf und Zeitzone werden im Cockpit gepflegt.
+Vercel validiert Kontaktstatus, Zustimmung, KI-Regeln und Stop-Schalter, bevor eine Nachricht auf `sending` gesetzt wird. Der Laptop zieht nur solche validierten Aufträge. Vor dem tatsächlichen Senden prüft der Server den Kontaktstatus erneut. Der lokale Worker führt zusätzlich ein dauerhaftes Versandjournal. Ein Vorgang, dessen Zustand nach einem Absturz unklar ist, wird **nicht** automatisch wiederholt.
 
-### Datenbank und Verarbeitung
+Manuell vom verknüpften WhatsApp-Handy gesendete Nachrichten werden für bereits im CRM zugeordnete 1:1-Kontakte in die gemeinsame Timeline gespiegelt. Gruppen, Broadcasts, Newsletter und fremde private Chats werden ignoriert. Beim ersten Verbinden wird bewusst keine alte Chat-Historie automatisch importiert, damit historische Nachrichten keine neue KI-Antwort auslösen.
 
-Die Migration `supabase/migrations/20260902015002_jj_whatsapp_sales_workspace.sql` ergänzt fünf Tabellen mit RLS und ohne Zugriffsrechte für `anon` oder `authenticated`. Die produktive Anwendung greift wie bisher über den auf das JJ-Media-Projekt beschränkten Vercel-OIDC-Proxy zu. Dessen versionierter Code liegt unter `supabase/functions/jj-media-db-proxy`; die OIDC-Prüfung bleibt unverändert. Legitimes `UPDATE ... SET` und `ON CONFLICT ... DO UPDATE SET` werden unterstützt.
-
-Der WhatsApp-Server sendet jede Minute einen signierten Tick. Der Tick verarbeitet höchstens eine offene Antwort oder einen freigegebenen Erstkontakt. Es braucht keinen minütlichen Vercel-Cron. In der App werden nur Nachrichten bereits zugeordneter CRM-Nummern gespeichert; Gruppen, Broadcasts und fremde Privatunterhaltungen werden nicht importiert. Ein- und ausgehende Nachrichten besitzen eindeutige IDs. Ausgehende Zustände `sending` oder `unknown` werden niemals blind erneut gesendet.
-
-Bei unklarem Versandstatus in der Inbox **Status prüfen** verwenden und gegebenenfalls direkt in WhatsApp nachsehen. Die Bridge speichert Versand-IDs dauerhaft. Erledigte Webhooks behalten 30 Tage nur ihre IDs; zugestellter Nachrichtentext wird aus dem lokalen Webhook-Journal entfernt. Fehlgeschlagene Webhooks bleiben bis zur Fehlerbehebung in der Warteschlange. Ein Stop oder eine menschliche Übernahme invalidiert laufende KI-Entwürfe. Bereits an WhatsApp übergebene Nachrichten können technisch nicht zurückgehalten werden.
-
-Kalenderbuchungen verwenden einen deterministischen Google-Event-Identifier und eine Sperre je Kalender. Vor der Buchung werden Verfügbarkeit und aktuelle Einstellungen erneut geprüft. Ein vom Kalender nicht eindeutig bestätigter Vorgang wird zur persönlichen Prüfung übergeben. Externe Änderungen im Google-Kalender bleiben möglich; die KI erhält kein Recht, bestehende Termine zu verschieben oder zu löschen. Bei eingehenden Anhängen wird zur persönlichen Bearbeitung übergeben; automatische Audiotranskription ist nicht Teil dieser Version.
+Baileys ist eine inoffizielle WhatsApp-Web-Anbindung. Deshalb gibt es keine technische Garantie gegen Kontoeinschränkungen. Das System enthält keine Tricks zur Umgehung von Spam-Erkennung; die Schutzschicht besteht aus Zustimmung, manueller Freigabe, Limits, Abstand, Opt-out und Kill-Switch. Für größere Volumen sollte die offizielle WhatsApp Business Platform verwendet werden.
 
 ## Verifikation
 
+Root-Anwendung:
+
 ```sh
-npm run test:whatsapp
 npm run typecheck
-npm run build
+npm run test:whatsapp
 ```
 
-Die Tests verwenden keine Kundennummern, WhatsApp-Sitzungen, KI-Kontingente oder echten Kalendertermine. Sie prüfen unter anderem doppelte Aufrufe, unklare Sendebestätigungen, Neustarts, manipulierte Webhooks, Wissensfreigaben und mehrdeutige Terminauswahl. Ein vollständiger Integrationstest mit einer eigenen freigegebenen Testnummer und einem Testkalender folgt erst nach Einrichtung der Verbindungen.
+Windows-Worker:
 
-## Manuelle Freigabe für Erstnachrichten
-
-- Neue Erstkontakte werden nie direkt aus der Vorbereitung versendet. Sie landen zuerst im Tageslauf mit Status `review`.
-- Der erste Text ist deterministisch: `Hallo, bin ich da bei <Unternehmensname> gelandet?`
-- Das Team sieht Unternehmen, Lead-Zusammenfassung und Nachricht nebeneinander und entscheidet `Freigeben` oder `Ablehnen`.
-- Nur freigegebene Einträge wechseln auf `queued`. Der Tageslauf verarbeitet sie innerhalb des erlaubten Zeitfensters mit mindestens drei Minuten Abstand.
-- Die Freigabe ersetzt keine WhatsApp-Einwilligung. Ohne dokumentierte Zustimmung bleibt der Versand technisch gesperrt.
-- Opt-out, Sperr-Tags, geschlossene Chats oder eine Team-Übernahme stoppen auch bereits vorbereitete Einträge.
-
+```sh
+cd services/whatsapp-bridge
+npm install
+npm test
+```

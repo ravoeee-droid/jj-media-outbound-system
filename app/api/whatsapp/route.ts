@@ -6,7 +6,7 @@ import { availableSlots, bookSlot, calendarConnected, localClock } from "@/lib/w
 import { getAgentConfig, withLease } from "@/lib/whatsapp/config";
 import { limitedJson, whatsappError, whatsappWorkspace } from "@/lib/whatsapp/http";
 import { modeSchema } from "@/lib/whatsapp/policy";
-import { getBridgeStatus } from "@/lib/whatsapp/provider";
+import { getBridgeStatus } from "@/lib/whatsapp/worker-status";
 import { secureAccessConfigured } from "@/lib/whatsapp/access";
 import { createReply, handoff, openThread, queueThread, reconcileMessage, reviewQueueItem, sendManual, threadMessages, threadRecord, updateThread } from "@/lib/whatsapp/service";
 
@@ -45,7 +45,7 @@ export async function GET(request: Request) {
       db.select({ thread: whatsappThreads, lead: { id: leads.id, company: leads.company, contact: leads.contact, phone: leads.phone, pipelineStage: leads.pipelineStage, summary: leads.summary, websiteUrl: leads.websiteUrl, salesPriority: leads.salesPriority } }).from(whatsappThreads).innerJoin(leads, and(eq(leads.id, whatsappThreads.leadId), eq(leads.workspaceId, whatsappThreads.workspaceId))).where(eq(whatsappThreads.workspaceId, workspace.workspaceId)).orderBy(desc(whatsappThreads.updatedAt)).limit(500),
       db.select({ id: leads.id, company: leads.company, contact: leads.contact, phone: leads.phone, summary: leads.summary, websiteUrl: leads.websiteUrl, salesPriority: leads.salesPriority }).from(leads).where(eq(leads.workspaceId, workspace.workspaceId)).orderBy(desc(leads.salesPriority)).limit(1_000),
       db.select({ id: whatsappQueue.id, threadId: whatsappQueue.threadId, status: whatsappQueue.status, error: whatsappQueue.error, messageId: whatsappQueue.messageId, sentAt: whatsappQueue.sentAt, createdAt: whatsappQueue.createdAt, updatedAt: whatsappQueue.updatedAt, body: whatsappMessages.body }).from(whatsappQueue).leftJoin(whatsappMessages, and(eq(whatsappMessages.workspaceId, whatsappQueue.workspaceId), eq(whatsappMessages.id, whatsappQueue.messageId))).where(eq(whatsappQueue.workspaceId, workspace.workspaceId)).orderBy(desc(whatsappQueue.updatedAt)).limit(1_000),
-      getBridgeStatus(), calendarConnected(workspace.user.id),
+      getBridgeStatus(workspace.workspaceId), calendarConnected(workspace.user.id),
       db.select().from(settings).where(and(eq(settings.workspaceId, workspace.workspaceId), eq(settings.key, "jj_whatsapp_last_tick"))).limit(1),
     ]);
     const today = localClock(new Date(), config.timezone).day;

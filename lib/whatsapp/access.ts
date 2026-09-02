@@ -3,5 +3,5 @@ export function secureAccessConfigured() {
 }
 
 export function requireSecureAccess() {
-  if (!secureAccessConfigured()) throw new Error("Bitte vor Versand oder Buchung einen eigenen Cockpit-Zugang einrichten: Passwort mit mindestens 12 Zeichen und einen Signaturschlüssel mit mindestens 32 Zeichen.");
+  if (!secureAccessConfigured()) throw new Error("Bitte vor Versand oder Buchung einen eigenen Outbound-Tool-Zugang einrichten: Passwort mit mindestens 12 Zeichen und einen Signaturschlüssel mit mindestens 32 Zeichen.");
 }
