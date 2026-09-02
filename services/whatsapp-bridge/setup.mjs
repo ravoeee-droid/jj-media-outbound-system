@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { emitKeypressEvents } from "node:readline";
 import readline from "node:readline/promises";
 
 const root = dirname(fileURLToPath(import.meta.url));
@@ -20,7 +21,7 @@ function normalizeBase(value) {
 async function hiddenQuestion(label) {
   if (!process.stdin.isTTY || typeof process.stdin.setRawMode !== "function") return rl.question(label);
   process.stdout.write(label);
-  readline.emitKeypressEvents(process.stdin);
+  emitKeypressEvents(process.stdin);
   process.stdin.setRawMode(true);
   let value = "";
   return new Promise((resolve, reject) => {
