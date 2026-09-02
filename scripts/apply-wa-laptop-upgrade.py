@@ -5,11 +5,23 @@ def replace_once(path: str, old: str, new: str):
     file = Path(path)
     text = file.read_text(encoding="utf-8")
     if old not in text:
-        raise SystemExit(f"Expected block not found in {path}: {old[:120]!r}")
+        raise SystemExit(f"Expected block not found in {path}: {old[:140]!r}")
     file.write_text(text.replace(old, new, 1), encoding="utf-8")
 
 
 service = "lib/whatsapp/service.ts"
+
+# Stop pending review entries as well when a contact is handed off or opts out.
+replace_once(
+    service,
+    'await getDb().update(whatsappQueue).set({ status: "cancelled", error: reason, updatedAt: new Date() }).where(and(eq(whatsappQueue.workspaceId, workspaceId), eq(whatsappQueue.threadId, threadId), eq(whatsappQueue.status, "queued")));',
+    'await getDb().update(whatsappQueue).set({ status: "cancelled", error: reason, updatedAt: new Date() }).where(and(eq(whatsappQueue.workspaceId, workspaceId), eq(whatsappQueue.threadId, threadId), inArray(whatsappQueue.status, ["review", "queued"])));'
+)
+replace_once(
+    service,
+    'await db.update(whatsappQueue).set({ status: "cancelled", error: "Kontakt gestoppt", updatedAt: new Date() }).where(and(eq(whatsappQueue.workspaceId, workspaceId), eq(whatsappQueue.threadId, threadId), eq(whatsappQueue.status, "queued")));',
+    'await db.update(whatsappQueue).set({ status: "cancelled", error: "Kontakt gestoppt", updatedAt: new Date() }).where(and(eq(whatsappQueue.workspaceId, workspaceId), eq(whatsappQueue.threadId, threadId), inArray(whatsappQueue.status, ["review", "queued"])));'
+)
 
 replace_once(
     service,
@@ -78,12 +90,14 @@ export async function reviewQueueItem(workspaceId: string, queueId: string, deci
 '''
 )
 
+# Fixed operational cadence: review items never enter this calculation; only approved queue items do.
 replace_once(
     service,
     'if (today.some((row) => row.attemptedAt && Date.now() - row.attemptedAt.getTime() < 120_000)) return { sent: 0, reason: "spacing" };',
     'if (today.some((row) => row.attemptedAt && Date.now() - row.attemptedAt.getTime() < 180_000)) return { sent: 0, reason: "spacing" };'
 )
 
+# The first message is deliberately deterministic and human-reviewable.
 replace_once(
     service,
     '''    } else {
@@ -92,7 +106,7 @@ replace_once(
     '''    } else if (outreach) {
       decision = {
         reply: `Hallo, bin ich da bei ${lead.company} gelandet?`,
-        intent: "outreach",
+        intent: "other",
         confidence: 1,
         handoff: false,
         reason: "Fest definierter, vom Team kontrollierbarer Gesprächseinstieg.",
@@ -105,10 +119,12 @@ replace_once(
       if (decision.intent === "booking" && !decision.handoff) {'''
 )
 
-# Pending review items must also stop on handoff, opt-out or inbound activity.
-service_text = Path(service).read_text(encoding="utf-8")
-service_text = service_text.replace('eq(whatsappQueue.status, "queued")))', 'inArray(whatsappQueue.status, ["review", "queued"])))')
-Path(service).write_text(service_text, encoding="utf-8")
+# If a contact replies while a prepared/approved first contact exists, cancel it immediately.
+replace_once(
+    service,
+    'await db.update(whatsappQueue).set({ status: "cancelled", error: "Kontakt hat geantwortet", updatedAt: new Date() }).where(and(eq(whatsappQueue.workspaceId, workspaceId), eq(whatsappQueue.threadId, thread.id), eq(whatsappQueue.status, "queued")));',
+    'await db.update(whatsappQueue).set({ status: "cancelled", error: "Kontakt hat geantwortet", updatedAt: new Date() }).where(and(eq(whatsappQueue.workspaceId, workspaceId), eq(whatsappQueue.threadId, thread.id), inArray(whatsappQueue.status, ["review", "queued"])));'
+)
 
 route = "app/api/whatsapp/route.ts"
 replace_once(
@@ -125,6 +141,11 @@ replace_once(
     route,
     '  z.object({ action: z.literal("queue"), threadId: z.string().uuid(), enabled: z.boolean() }),',
     '  z.object({ action: z.literal("queue"), threadId: z.string().uuid(), enabled: z.boolean() }),\n  z.object({ action: z.literal("review"), queueId: z.string().uuid(), decision: z.enum(["approve", "reject"]) }),'
+)
+replace_once(
+    route,
+    'db.select({ thread: whatsappThreads, lead: { id: leads.id, company: leads.company, contact: leads.contact, phone: leads.phone, pipelineStage: leads.pipelineStage } }).from(whatsappThreads)',
+    'db.select({ thread: whatsappThreads, lead: { id: leads.id, company: leads.company, contact: leads.contact, phone: leads.phone, pipelineStage: leads.pipelineStage, summary: leads.summary, websiteUrl: leads.websiteUrl, salesPriority: leads.salesPriority } }).from(whatsappThreads)'
 )
 replace_once(
     route,
@@ -163,17 +184,13 @@ replace_once(
 replace_once(
     ui,
     '''      <div className={styles.sectionHeader}><div><h2>Bis zu {config.dailyOutreachLimit} Unternehmen am Tag.</h2><p>Freigegebene Kontakte erhalten eine individuelle erste Nachricht. Antworten landen direkt in der Inbox.</p></div><span className={`${styles.badge} ${config.dailyOutreachEnabled && heartbeatLive ? styles.good : ""}`}>{config.dailyOutreachEnabled ? heartbeatLive ? "Tageslauf aktiv" : "Wartet auf Verbindung" : "Tageslauf pausiert"}</span></div>''',
-    '''      <div className={styles.sectionHeader}><div><h2>Erst prüfen, dann senden.</h2><p>Jede Erstnachricht landet zuerst hier zur manuellen Freigabe. Nur bestätigte Nachrichten wechseln in den kontrollierten Tageslauf.</p></div><span className={`${styles.badge} ${config.dailyOutreachEnabled && heartbeatLive ? styles.good : ""}`}>{data.queue.some((item) => item.status === "review") ? `${reviewQueue} Freigaben offen` : config.dailyOutreachEnabled ? heartbeatLive ? "Tageslauf aktiv" : "Wartet auf Verbindung" : "Tageslauf pausiert"}</span></div>'''
+    '''      <div className={styles.sectionHeader}><div><h2>Erst prüfen, dann senden.</h2><p>Jede Erstnachricht landet zuerst hier zur manuellen Freigabe. Nur bestätigte Nachrichten wechseln in den kontrollierten Tageslauf.</p></div><span className={`${styles.badge} ${config.dailyOutreachEnabled && heartbeatLive ? styles.good : ""}`}>{reviewQueue > 0 ? `${reviewQueue} Freigaben offen` : config.dailyOutreachEnabled ? heartbeatLive ? "Tageslauf aktiv" : "Wartet auf Verbindung" : "Tageslauf pausiert"}</span></div>'''
 )
+replace_once(ui, '<p>{activeQueue} Kontakte warten auf den nächsten Versand.</p>', '<p>{reviewQueue} zur Prüfung · {activeQueue} freigegeben und wartend.</p>')
 replace_once(
     ui,
-    '''<p>{activeQueue} Kontakte warten auf den nächsten Versand.</p>''',
-    '''<p>{reviewQueue} zur Prüfung · {activeQueue} freigegeben und wartend.</p>'''
-)
-replace_once(
-    ui,
-    '''<p>{config.outreachStartHour}:00–{config.outreachEndHour}:00 Uhr · {config.timezone}<br />Höchstens eine neue Nachricht alle zwei Minuten.</p>''',
-    '''<p>{config.outreachStartHour}:00–{config.outreachEndHour}:00 Uhr · {config.timezone}<br />Freigegebene Erstnachrichten werden mit mindestens drei Minuten Abstand verarbeitet.</p>'''
+    '<p>{config.outreachStartHour}:00–{config.outreachEndHour}:00 Uhr · {config.timezone}<br />Höchstens eine neue Nachricht alle zwei Minuten.</p>',
+    '<p>{config.outreachStartHour}:00–{config.outreachEndHour}:00 Uhr · {config.timezone}<br />Freigegebene Erstnachrichten werden mit mindestens drei Minuten Abstand verarbeitet.</p>'
 )
 replace_once(
     ui,
@@ -181,18 +198,23 @@ replace_once(
     '''<div className={styles.panel}><div className={styles.toolbar}><h3>Freigabe & Warteschlange</h3><button className={styles.secondary} onClick={() => { setTab("inbox"); setShowNew(true); }}>Kontakt hinzufügen</button></div><div className={styles.tableWrap}><table><thead><tr><th>Unternehmen</th><th>Nachricht</th><th>Status</th><th>Aktion</th></tr></thead><tbody>{data.queue.map((item) => { const row = data.threads.find((r) => r.thread.id === item.threadId); return <tr key={item.id}><td><strong>{row?.lead.company || "Kontakt"}</strong>{row?.lead.summary && <small>{row.lead.summary.slice(0, 150)}</small>}</td><td><span>{item.body || "Entwurf wird vorbereitet …"}</span>{item.error && <small>{item.error}</small>}</td><td><span className={styles.badge}>{queueLabels[item.status] || item.status}</span>{item.sentAt && <small>{dateLabel(item.sentAt)}</small>}</td><td>{item.status === "review" && <><button className={styles.primary} disabled={Boolean(busy) || !item.body} onClick={() => void action({ action: "review", queueId: item.id, decision: "approve" })}>✓ Freigeben</button><button className={styles.dangerButton} disabled={Boolean(busy)} onClick={() => void action({ action: "review", queueId: item.id, decision: "reject" })}>Ablehnen</button></>}<button className={styles.textButton} onClick={() => { chooseThread(item.threadId); setTab("inbox"); }}>Details ↗</button>{item.status === "queued" && <button className={styles.textButton} disabled={Boolean(busy)} onClick={() => void action({ action: "queue", threadId: item.threadId, enabled: false })}>Freigabe zurückziehen</button>}</td></tr>; })}</tbody></table>{data.queue.length === 0 && <div className={styles.empty}><h3>Noch keine Erstnachrichten vorbereitet</h3><p>Öffne einen Lead, dokumentiere seine WhatsApp-Zustimmung und gib ihn für den Tageslauf frei. Der Entwurf erscheint dann zuerst hier zur Kontrolle.</p></div>}</div></div>'''
 )
 
-# Keep language in the product consistent: the user-facing product is the Outbound Tool, not a separate cockpit.
 ui_text = Path(ui).read_text(encoding="utf-8")
 ui_text = ui_text.replace("Cockpit-Zugang einrichten", "Outbound-Tool-Zugang absichern")
 ui_text = ui_text.replace("braucht das Cockpit ein eigenes Passwort", "braucht das Outbound Tool ein eigenes Passwort")
 ui_text = ui_text.replace("Aufgabe im Cockpit", "Aufgabe im Outbound Tool")
 Path(ui).write_text(ui_text, encoding="utf-8")
 
-# Document the deliberate review gate and fixed cadence. This is operational control, not an anti-detection mechanism.
+# Hard-code the diagnostic sales flow so saved legacy configs cannot make the agent pitch immediately.
+ai = "lib/whatsapp/ai.ts"
+replace_once(
+    ai,
+    '- Stelle höchstens eine kurze Rückfrage pro Nachricht. Kein Druck, keine künstliche Verknappung, keine Ergebnisgarantien. Keine fremden Kunden- oder Kontaktdaten.\n',
+    '- Stelle höchstens eine kurze Rückfrage pro Nachricht. Kein Druck, keine künstliche Verknappung, keine Ergebnisgarantien. Keine fremden Kunden- oder Kontaktdaten.\n- Wenn der Verlauf mit der Identitätsfrage „Hallo, bin ich da bei … gelandet?“ beginnt und der Kontakt bestätigt: nicht pitchen. Kurz transparent sagen, dass du JJ-Media digital unterstützt, und dann genau eine diagnostische Frage stellen. Nutze LEAD_DATEN nur, um die passende Frage auszuwählen, nicht um den Kontakt mit Recherchewissen zu überfallen.\n- Vertriebsdialog in natürlicher Reihenfolge: aktuelle Situation → konkretes Problem → Auswirkung → Priorität/Ziel → bisherige Versuche → erst danach um Erlaubnis bitten, eine passende Idee/Lösung zu erklären. Überspringe bereits beantwortete Punkte und arbeite nie einen starren Fragenkatalog ab.\n'
+)
+
 doc = Path("docs/whatsapp-workspace.md")
 if doc.exists():
     text = doc.read_text(encoding="utf-8")
-    marker = "##"
     addition = '''\n\n## Manuelle Freigabe für Erstnachrichten\n\n- Neue Erstkontakte werden nie direkt aus der Vorbereitung versendet. Sie landen zuerst im Tageslauf mit Status `review`.\n- Der erste Text ist deterministisch: `Hallo, bin ich da bei <Unternehmensname> gelandet?`\n- Das Team sieht Unternehmen, Lead-Zusammenfassung und Nachricht nebeneinander und entscheidet `Freigeben` oder `Ablehnen`.\n- Nur freigegebene Einträge wechseln auf `queued`. Der Tageslauf verarbeitet sie innerhalb des erlaubten Zeitfensters mit mindestens drei Minuten Abstand.\n- Die Freigabe ersetzt keine WhatsApp-Einwilligung. Ohne dokumentierte Zustimmung bleibt der Versand technisch gesperrt.\n- Opt-out, Sperr-Tags, geschlossene Chats oder eine Team-Übernahme stoppen auch bereits vorbereitete Einträge.\n'''
     if "## Manuelle Freigabe für Erstnachrichten" not in text:
         doc.write_text(text.rstrip() + addition + "\n", encoding="utf-8")
