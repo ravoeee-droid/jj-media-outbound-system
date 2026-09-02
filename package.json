@@ -13,6 +13,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "npm run typecheck && npm run lint",
+    "test:whatsapp": "node --experimental-strip-types --test tests/whatsapp-policy.test.mjs services/whatsapp-bridge/core.test.mjs",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio"

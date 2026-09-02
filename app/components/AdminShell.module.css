@@ -174,7 +174,7 @@
     bottom:10px;
     z-index:100;
     display:grid;
-    grid-template-columns:repeat(5,1fr);
+    grid-template-columns:repeat(6,minmax(64px,1fr));
     gap:4px;
     padding:6px;
     background:rgba(20,18,22,.94);

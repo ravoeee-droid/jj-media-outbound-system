@@ -2,11 +2,12 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import styles from "./AdminShell.module.css";
 
-type IconName = "home" | "send" | "spark" | "plug" | "pulse";
+type IconName = "home" | "send" | "spark" | "plug" | "pulse" | "chat";
 
 const navigation = [
   { key: "overview", label: "Übersicht", hint: "Command Center", href: "/dashboard", icon: "home" },
   { key: "outbound", label: "Outbound", hint: "Leads & Videos", href: "/dashboard/outbound", icon: "send" },
+  { key: "whatsapp", label: "WhatsApp", hint: "Inbox & KI-Agent", href: "/dashboard/whatsapp", icon: "chat" },
   { key: "intelligence", label: "Intelligence", hint: "Chancen & Signale", href: "/dashboard/intelligence", icon: "spark" },
   { key: "integrations", label: "Integrationen", hint: "Datenquellen", href: "/dashboard/integrations", icon: "plug" },
   { key: "system", label: "System", hint: "Status & Technik", href: "/system", icon: "pulse" },
@@ -18,6 +19,7 @@ function Icon({ name }: { name: IconName }) {
   if (name === "send") return <svg {...common}><path d="m4 4 16 7.2-7 2.1-2.2 6.7L4 4Z"/><path d="m11 13 4.8-4.8"/></svg>;
   if (name === "spark") return <svg {...common}><path d="M12 2.8 14 9l6.2 2-6.2 2-2 6.2-2-6.2-6.2-2 6.2-2 2-6.2Z"/><path d="m19 3 .7 2.2L22 6l-2.3.8L19 9l-.8-2.2L16 6l2.2-.8L19 3Z"/></svg>;
   if (name === "plug") return <svg {...common}><path d="M8 3v5M16 3v5"/><path d="M6 8h12v2a6 6 0 0 1-6 6v5"/><path d="M9 21h6"/></svg>;
+  if (name === "chat") return <svg {...common}><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-2 2v-10.5A9.5 9.5 0 0 1 12 2a9 9 0 0 1 9 9.5Z"/><path d="M7 10h9M7 14h6"/></svg>;
   return <svg {...common}><path d="M3 12h4l2-6 4 12 2-6h6"/></svg>;
 }
 

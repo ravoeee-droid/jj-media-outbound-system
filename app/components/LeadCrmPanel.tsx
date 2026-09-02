@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+
 import { FormEvent, useEffect, useState } from "react";
 
 type LeadDetail = {
@@ -194,7 +196,7 @@ export default function LeadCrmPanel({
               </div>
             )}
 
-            <button className="button button--primary button--wide" type="submit" disabled={saving}>{saving ? "Speichert …" : "CRM-Akte speichern"}</button>
+            <Link className="button button--wide" href={`/dashboard/whatsapp?lead=${leadId}`}>WhatsApp öffnen</Link><button className="button button--primary button--wide" type="submit" disabled={saving}>{saving ? "Speichert …" : "CRM-Akte speichern"}</button>
             {message && <p className="crm-message" role="status">{message}</p>}
           </form>
         ) : (

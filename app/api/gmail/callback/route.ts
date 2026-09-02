@@ -3,14 +3,16 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/db";
 import { accounts } from "@/db/schema";
 import { requireWorkspace } from "@/lib/workspace";
+import { googleOAuthAppBase } from "@/lib/google-oauth-url";
 
 const STATE_COOKIE = "dg_gmail_oauth_state";
 
 function finish(request: Request, status: "connected" | "denied" | "error", detail?: string) {
-  const url = new URL("/dashboard", request.url);
+  const calendar = request.headers.get("cookie")?.split(";").some((entry) => entry.trim() === "jj_google_destination=whatsapp");
+  const url = new URL(`${googleOAuthAppBase(request.url)}/dashboard/${calendar ? "whatsapp?tab=connection" : "outbound"}`);
   url.searchParams.set("gmail", status);
   if (detail) url.searchParams.set("detail", detail.slice(0, 180));
-  url.hash = "integrationen";
+  if (!calendar) url.hash = "integrationen";
   const response = NextResponse.redirect(url);
   response.cookies.set(STATE_COOKIE, "", {
     httpOnly: true,
@@ -19,6 +21,7 @@ function finish(request: Request, status: "connected" | "denied" | "error", deta
     path: "/",
     maxAge: 0,
   });
+  response.cookies.set("jj_google_destination", "", { path: "/", maxAge: 0, httpOnly: true });
   return response;
 }
 
@@ -39,7 +42,7 @@ export async function GET(request: Request) {
     const clientId = process.env.AUTH_GOOGLE_ID;
     const clientSecret = process.env.AUTH_GOOGLE_SECRET;
     if (!clientId || !clientSecret) return finish(request, "error", "Google-Zugangsdaten fehlen in Vercel.");
-    const origin = (process.env.NEXT_PUBLIC_APP_URL || url.origin).replace(/\/$/, "");
+    const origin = googleOAuthAppBase(request.url);
     const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -77,7 +80,7 @@ export async function GET(request: Request) {
       .from(accounts)
       .where(and(eq(accounts.userId, workspace.user.id), eq(accounts.provider, "google")))
       .limit(1);
-    const refreshToken = tokens.refresh_token || existing?.refresh_token;
+    const refreshToken = tokens.refresh_token || (existing?.providerAccountId === googleUser.sub ? existing.refresh_token : undefined);
     if (!refreshToken) return finish(request, "error", "Google hat keinen dauerhaften Zugriff erteilt. Bitte erneut verbinden.");
 
     await db.delete(accounts).where(and(eq(accounts.userId, workspace.user.id), eq(accounts.provider, "google")));

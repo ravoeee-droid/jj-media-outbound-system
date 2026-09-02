@@ -41,3 +41,6 @@ next-env.d.ts
 /.sites-runtime/
 /outputs/
 /work/
+/services/whatsapp-bridge/bridge.env
+/services/whatsapp-bridge/data/
+/services/whatsapp-bridge/node_modules/

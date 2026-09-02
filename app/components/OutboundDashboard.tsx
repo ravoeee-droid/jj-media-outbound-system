@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import { upload } from "@vercel/blob/client";
 import Papa from "papaparse";
@@ -778,7 +780,7 @@ export default function OutboundDashboard({ userName = "JJ-Media" }: { userName?
                           <td><span className="muted">{lead.email || "Fehlt noch"}</span></td>
                           <td><span className={statusClass(lead.status)}><i />{lead.status}</span></td>
                           <td><strong className="watchtime">{lead.watch}</strong></td>
-                          <td><div className="table-action-group"><button onClick={() => setSelectedLeadId(lead.id)}>CRM</button><button onClick={() => generateLeadVideo(lead)} disabled={lead.videoStatus === "processing"}>{lead.videoStatus === "processing" ? "Erstellt …" : lead.videoStatus === "ready" ? "Video neu" : "Video erstellen"}</button><label className="table-upload-action">{uploadingProfileId === lead.id ? "Upload …" : "IG-Screenshot"}<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => void uploadProfileScreenshot(lead, event)} disabled={Boolean(uploadingProfileId)} /></label><button onClick={() => prepareEmail(lead)}>Gmail</button><a href={`/v/${lead.slug}`} target="_blank" rel="noreferrer">LP öffnen</a></div></td>
+                          <td><div className="table-action-group"><button onClick={() => setSelectedLeadId(lead.id)}>CRM</button><Link href={`/dashboard/whatsapp?lead=${lead.id}`}>WhatsApp</Link><button onClick={() => generateLeadVideo(lead)} disabled={lead.videoStatus === "processing"}>{lead.videoStatus === "processing" ? "Erstellt …" : lead.videoStatus === "ready" ? "Video neu" : "Video erstellen"}</button><label className="table-upload-action">{uploadingProfileId === lead.id ? "Upload …" : "IG-Screenshot"}<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => void uploadProfileScreenshot(lead, event)} disabled={Boolean(uploadingProfileId)} /></label><button onClick={() => prepareEmail(lead)}>Gmail</button><a href={`/v/${lead.slug}`} target="_blank" rel="noreferrer">LP öffnen</a></div></td>
                         </tr>
                       ))}
                     </tbody>

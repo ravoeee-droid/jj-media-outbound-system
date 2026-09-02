@@ -1,0 +1,7 @@
+{
+  "imports": {
+    "jose": "npm:jose@6.2.10",
+    "postgres": "jsr:@db/postgres@0.19.5"
+  }
+}
+

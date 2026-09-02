@@ -52,15 +52,26 @@ export async function put(pathname, body, options = {}) {
   return { url: storageUrl(path), pathname: path, contentType: options.contentType };
 }
 
-export async function get(pathOrUrl) {
+export async function get(pathOrUrl, options = {}) {
   const path = cleanPath(pathOrUrl);
   const signed = await broker({ action: "sign_download", path, expiresIn: 900 });
-  const response = await fetch(signed.signedUrl, { cache: "no-store" });
-  if (!response.ok) return null;
+  const headers = new Headers();
+  const requested = new Headers(options.headers);
+  for (const key of ["range", "if-none-match", "if-modified-since"]) {
+    const value = requested.get(key);
+    if (value) headers.set(key, value);
+  }
+  const response = await fetch(signed.signedUrl, { cache: "no-store", headers });
+  if (!response.ok && response.status !== 304 && response.status !== 416) return null;
+  const contentType = response.headers.get("content-type") || "application/octet-stream";
+  const size = Number(response.headers.get("content-length") || 0);
   return {
     stream: response.body,
-    contentType: response.headers.get("content-type") || "application/octet-stream",
-    size: Number(response.headers.get("content-length") || 0),
+    headers: response.headers,
+    statusCode: response.status,
+    blob: { contentType, size },
+    contentType,
+    size,
     pathname: path,
     url: storageUrl(path),
   };

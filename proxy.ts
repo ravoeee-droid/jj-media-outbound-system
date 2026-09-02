@@ -17,6 +17,7 @@ const publicApiPrefixes = [
   "/api/runtime-capabilities",
   "/api/cron/automation",
   "/api/telegram/webhook",
+  "/api/whatsapp/webhook",
 ];
 
 function withoutBasePath(pathname: string) {

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { googleOAuthAppBase } from "@/lib/google-oauth-url";
 
 const STATE_COOKIE = "dg_gmail_oauth_state";
 
@@ -10,7 +11,8 @@ export async function GET(request: Request) {
     }, { status: 503 });
   }
 
-  const origin = (process.env.NEXT_PUBLIC_APP_URL || new URL(request.url).origin).replace(/\/$/, "");
+  const origin = googleOAuthAppBase(request.url);
+  const calendar = new URL(request.url).searchParams.get("calendar") === "1";
   const state = crypto.randomUUID();
   const authorizationUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   authorizationUrl.searchParams.set("client_id", clientId);
@@ -26,6 +28,7 @@ export async function GET(request: Request) {
     "profile",
     "https://www.googleapis.com/auth/gmail.compose",
     "https://www.googleapis.com/auth/gmail.send",
+    ...(calendar ? ["https://www.googleapis.com/auth/calendar.events", "https://www.googleapis.com/auth/calendar.freebusy"] : []),
   ].join(" "));
 
   const response = NextResponse.redirect(authorizationUrl);
@@ -36,5 +39,6 @@ export async function GET(request: Request) {
     path: "/",
     maxAge: 10 * 60,
   });
+  response.cookies.set("jj_google_destination", calendar ? "whatsapp" : "outbound", { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/", maxAge: 600 });
   return response;
 }

@@ -299,3 +299,79 @@ export const jobs = pgTable(
 
 export type Lead = typeof leads.$inferSelect;
 export type NewLead = typeof leads.$inferInsert;
+
+// WhatsApp lives in the existing JJ-Media workspace; every query includes workspace_id.
+export const whatsappThreads = pgTable("jj_whatsapp_threads", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  leadId: uuid("lead_id").notNull().references(() => leads.id, { onDelete: "cascade" }),
+  phone: text("phone").notNull(),
+  mode: text("mode").$type<"manual" | "copilot" | "autopilot">().notNull().default("copilot"),
+  consent: text("consent").notNull().default("unknown"),
+  consentNote: text("consent_note").notNull().default(""),
+  consentAt: timestamp("consent_at", { withTimezone: true }),
+  status: text("status").notNull().default("open"),
+  handoffReason: text("handoff_reason").notNull().default(""),
+  summary: text("summary").notNull().default(""),
+  intent: text("intent").notNull().default(""),
+  unread: boolean("unread").notNull().default(false),
+  version: integer("version").notNull().default(0),
+  lastMessageAt: timestamp("last_message_at", { withTimezone: true }),
+  lastInboundId: uuid("last_inbound_id"),
+  offeredSlots: jsonb("offered_slots").$type<import("@/lib/whatsapp/policy").CalendarSlot[]>().notNull().default([]),
+  operatorSlots: jsonb("operator_slots").$type<import("@/lib/whatsapp/policy").CalendarSlot[]>().notNull().default([]),
+  nextFollowUpAt: timestamp("next_follow_up_at", { withTimezone: true }),
+  createdAt,
+  updatedAt,
+}, (t) => [uniqueIndex("jj_wa_phone_unique").on(t.workspaceId, t.phone), uniqueIndex("jj_wa_lead_unique").on(t.workspaceId, t.leadId), index("jj_wa_inbox_idx").on(t.workspaceId, t.lastMessageAt)]);
+
+export const whatsappMessages = pgTable("jj_whatsapp_messages", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  threadId: uuid("thread_id").notNull().references(() => whatsappThreads.id, { onDelete: "cascade" }),
+  direction: text("direction").notNull(),
+  kind: text("kind").notNull().default("text"),
+  status: text("status").notNull().default("draft"),
+  body: text("body").notNull().default(""),
+  providerId: text("provider_id"),
+  idempotencyKey: text("idempotency_key").notNull(),
+  sourceId: uuid("source_id"),
+  metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
+  sentAt: timestamp("sent_at", { withTimezone: true }),
+  createdAt,
+  updatedAt,
+}, (t) => [uniqueIndex("jj_wa_message_key_unique").on(t.workspaceId, t.idempotencyKey), uniqueIndex("jj_wa_provider_unique").on(t.workspaceId, t.providerId), index("jj_wa_history_idx").on(t.workspaceId, t.threadId, t.createdAt)]);
+
+export const whatsappLocks = pgTable("jj_whatsapp_locks", {
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  key: text("key").notNull(),
+  token: uuid("token").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+}, (t) => [primaryKey({ columns: [t.workspaceId, t.key] })]);
+
+export const whatsappQueue = pgTable("jj_whatsapp_queue", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  threadId: uuid("thread_id").notNull().references(() => whatsappThreads.id, { onDelete: "cascade" }),
+  status: text("status").notNull().default("queued"),
+  messageId: uuid("message_id").references(() => whatsappMessages.id),
+  error: text("error").notNull().default(""),
+  attemptedAt: timestamp("attempted_at", { withTimezone: true }),
+  sentAt: timestamp("sent_at", { withTimezone: true }),
+  createdAt,
+  updatedAt,
+}, (t) => [uniqueIndex("jj_wa_queue_thread_unique").on(t.workspaceId, t.threadId), index("jj_wa_queue_due_idx").on(t.workspaceId, t.status, t.createdAt)]);
+
+export const whatsappReservations = pgTable("jj_whatsapp_reservations", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  threadId: uuid("thread_id").notNull().references(() => whatsappThreads.id, { onDelete: "cascade" }),
+  calendarId: text("calendar_id").notNull(),
+  eventId: text("event_id").notNull(),
+  startAt: timestamp("start_at", { withTimezone: true }).notNull(),
+  endAt: timestamp("end_at", { withTimezone: true }).notNull(),
+  status: text("status").notNull().default("reserved"),
+  joinUrl: text("join_url").notNull().default(""),
+  createdAt,
+  updatedAt,
+}, (t) => [uniqueIndex("jj_wa_reservation_event_unique").on(t.workspaceId, t.eventId), index("jj_wa_reservation_idx").on(t.workspaceId, t.calendarId, t.startAt)]);
