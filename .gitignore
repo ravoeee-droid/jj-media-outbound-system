@@ -44,3 +44,6 @@ next-env.d.ts
 /services/whatsapp-bridge/bridge.env
 /services/whatsapp-bridge/data/
 /services/whatsapp-bridge/node_modules/
+
+# ProjectAtlas local repository intelligence
+.projectatlas/
