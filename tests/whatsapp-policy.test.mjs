@@ -4,9 +4,21 @@ import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { agentConfigSchema, chosenSlot, DEFAULT_AGENT, effectiveMode, guardDecision, isOptOut, normalizePhone, requiresHuman, selectKnowledge } from "../lib/whatsapp/policy.ts";
 import { verifyWebhook } from "../lib/whatsapp/provider.ts";
+import { requireSecureAccess, secureAccessConfigured } from "../lib/whatsapp/access.ts";
 
 const now = Date.parse("2026-09-02T08:00:00Z");
 const slot = (hour, day = "02", expiresAt = "2026-09-02T08:15:00Z") => ({ id: `${day}-${hour}`, start: `2026-09-${day}T${hour}:00:00Z`, end: `2026-09-${day}T${hour}:15:00Z`, label: `Mi., ${day}.09.2026, ${Number(hour) + 2}:00`, expiresAt, configVersion: 0, calendarId: "primary" });
+
+test("live sends and bookings require explicitly configured cockpit credentials", () => {
+  const names = ["COCKPIT_PASSWORD", "COCKPIT_AUTH_SECRET", "AUTH_SECRET"];
+  const saved = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  try {
+    names.forEach((name) => delete process.env[name]);
+    assert.equal(secureAccessConfigured(), false); assert.throws(requireSecureAccess);
+    process.env.COCKPIT_PASSWORD = "a-long-test-password"; process.env.COCKPIT_AUTH_SECRET = "s".repeat(64);
+    assert.equal(secureAccessConfigured(), true); assert.doesNotThrow(requireSecureAccess);
+  } finally { names.forEach((name) => { if (saved[name] === undefined) delete process.env[name]; else process.env[name] = saved[name]; }); }
+});
 
 test("defaults pause all automation and cap daily first contacts at 30", () => {
   assert.equal(DEFAULT_AGENT.enabled, false); assert.equal(DEFAULT_AGENT.dailyOutreachEnabled, false);

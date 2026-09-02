@@ -5,6 +5,7 @@ import { accounts, bookings, leads, whatsappReservations, whatsappThreads, type 
 import { getGoogleAccessToken } from "@/lib/google";
 import { getAgentConfig, withLease } from "./config";
 import { effectiveMode, isSuppressed, type AgentConfig, type CalendarSlot } from "./policy";
+import { requireSecureAccess } from "./access";
 
 const CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.events";
 const FREEBUSY_SCOPE = "https://www.googleapis.com/auth/calendar.freebusy";
@@ -73,6 +74,7 @@ export async function availableSlots(userId: string, workspaceId: string, config
 }
 
 export async function bookSlot(args: { userId: string; workspaceId: string; threadId: string; lead: Lead; config: AgentConfig; slot: CalendarSlot; expectedVersion: number; automatic?: boolean }) {
+  requireSecureAccess();
   if (!args.config.allowBooking) throw new Error("Automatische Terminierung ist deaktiviert.");
   const { userId, workspaceId, threadId, lead, config, slot } = args;
   return withLease(workspaceId, `calendar:${config.calendarId}`, async () => {

@@ -2,6 +2,7 @@ import { and, eq, lt } from "drizzle-orm";
 import { getDb } from "@/db";
 import { settings, whatsappLocks } from "@/db/schema";
 import { agentConfigSchema, DEFAULT_AGENT, type AgentConfig } from "./policy";
+import { requireSecureAccess } from "./access";
 
 export const AGENT_CONFIG_KEY = "jj_whatsapp_agent";
 
@@ -13,6 +14,7 @@ export async function getAgentConfig(workspaceId: string): Promise<AgentConfig> 
 
 export async function saveAgentConfig(workspaceId: string, input: unknown) {
   const config = agentConfigSchema.parse(input);
+  if (config.enabled || config.dailyOutreachEnabled) requireSecureAccess();
   if (config.enabled && !config.knowledge.some((entry) => entry.approved)) throw new Error("Bitte zuerst mindestens einen Wissenseintrag freigeben.");
   if (config.dailyOutreachEnabled && !config.enabled) throw new Error("Für den Tageslauf muss die KI aktiviert sein.");
   const db = getDb();

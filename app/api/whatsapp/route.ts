@@ -7,6 +7,7 @@ import { getAgentConfig, withLease } from "@/lib/whatsapp/config";
 import { limitedJson, whatsappError, whatsappWorkspace } from "@/lib/whatsapp/http";
 import { modeSchema } from "@/lib/whatsapp/policy";
 import { getBridgeStatus } from "@/lib/whatsapp/provider";
+import { secureAccessConfigured } from "@/lib/whatsapp/access";
 import { createReply, handoff, openThread, queueThread, reconcileMessage, sendManual, threadMessages, threadRecord, updateThread } from "@/lib/whatsapp/service";
 
 export const runtime = "nodejs";
@@ -48,7 +49,7 @@ export async function GET(request: Request) {
     ]);
     const today = localClock(new Date(), config.timezone).day;
     const sentToday = queue.filter((item) => item.status === "sent" && item.sentAt && localClock(item.sentAt, config.timezone).day === today).length;
-    return Response.json({ config, threads, leads: leadRows, queue, connection, calendar, lastTick: heartbeat[0]?.value || null, sentToday, workspaceId: workspace.workspaceId }, { headers: { "cache-control": "no-store" } });
+    return Response.json({ config, threads, leads: leadRows, queue, connection, calendar, googleConfigured: Boolean(process.env.AUTH_GOOGLE_ID && process.env.AUTH_GOOGLE_SECRET), secureAccess: secureAccessConfigured(), lastTick: heartbeat[0]?.value || null, sentToday, workspaceId: workspace.workspaceId }, { headers: { "cache-control": "no-store" } });
   } catch (error) { return whatsappError(error); }
 }
 

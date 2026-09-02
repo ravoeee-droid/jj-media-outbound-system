@@ -45,9 +45,9 @@ Port 3001 bindet nur an localhost. Ein bestehender HTTPS-Reverse-Proxy leitet di
 | `WHATSAPP_AI_MODEL` | Optional: verfügbare Modell-ID im Vercel AI Gateway |
 | `AI_GATEWAY_API_KEY` | Optional, falls keine AI-Gateway-Freigabe per Vercel OIDC besteht |
 
-Nach Änderung der Variablen neu deployen. Der AI Gateway muss für das Projekt freigeschaltet sein und Kontingent besitzen. Das Modell wird gegen die aktuelle Modellliste geprüft; ein fehlender Zugang oder ein erschöpftes Kontingent erzeugt einen sichtbaren Fehler und keine erfundene Antwort.
+Vor Versand und Buchungen müssen `COCKPIT_PASSWORD` (mindestens 12 Zeichen) und `COCKPIT_AUTH_SECRET` (mindestens 32 zufällige Zeichen) gesetzt sein. Der bisherige Standardzugang reicht für diese Aktionen nicht aus. Nach Änderung der Variablen neu deployen und mit dem eigenen Passwort anmelden. Der AI Gateway muss für das Projekt freigeschaltet sein und Kontingent besitzen. Das Modell wird gegen die aktuelle Modellliste geprüft; ein fehlender Zugang oder ein erschöpftes Kontingent erzeugt einen sichtbaren Fehler und keine erfundene Antwort.
 
-Google verwendet die vorhandenen Variablen `GOOGLE_CLIENT_ID` und `GOOGLE_CLIENT_SECRET`. Die Redirect-URI lautet `https://<Cockpit-Domain>/admin/api/gmail/callback`; `NEXT_PUBLIC_APP_URL` muss dieselbe öffentliche App-Basis enthalten. Zusätzlich zu den vorhandenen Mail-Berechtigungen werden für den Kalender `calendar.events` und `calendar.freebusy` angefragt. Eine erneute ausdrückliche Google-Freigabe ist erforderlich. Terminzeiten, Puffer, Vorlauf und Zeitzone werden im Cockpit gepflegt.
+Google verwendet die vorhandenen Variablen `AUTH_GOOGLE_ID` und `AUTH_GOOGLE_SECRET`. Die Redirect-URI lautet `https://<Cockpit-Domain>/admin/api/gmail/callback`; `NEXT_PUBLIC_APP_URL` muss dieselbe öffentliche App-Basis enthalten. Zusätzlich zu den vorhandenen Mail-Berechtigungen werden für den Kalender `calendar.events` und `calendar.freebusy` angefragt. Eine erneute ausdrückliche Google-Freigabe ist erforderlich. Terminzeiten, Puffer, Vorlauf und Zeitzone werden im Cockpit gepflegt.
 
 ### Datenbank und Verarbeitung
 

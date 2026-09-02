@@ -7,6 +7,7 @@ import { availableSlots, bookSlot, localClock } from "./calendar";
 import { getAgentConfig, withLease } from "./config";
 import { chosenSlot, effectiveMode, isOptOut, isSuppressed, normalizePhone, requiresHuman, type AgentMode, type CalendarSlot } from "./policy";
 import { bridgeConfigured, deliveryStatus, sendThroughBridge } from "./provider";
+import { requireSecureAccess } from "./access";
 
 export async function threadRecord(workspaceId: string, threadId: string) {
   const [row] = await getDb().select({ thread: whatsappThreads, lead: leads }).from(whatsappThreads).innerJoin(leads, and(eq(leads.id, whatsappThreads.leadId), eq(leads.workspaceId, whatsappThreads.workspaceId))).where(and(eq(whatsappThreads.workspaceId, workspaceId), eq(whatsappThreads.id, threadId))).limit(1);
@@ -93,6 +94,7 @@ function canContact(thread: typeof whatsappThreads.$inferSelect, lead: typeof le
 }
 
 async function deliver(args: { workspaceId: string; threadId: string; messageId: string; actor: "human" | "agent" | "outreach"; expectedVersion: number; configVersion?: number }) {
+  requireSecureAccess();
   const db = getDb();
   const { thread, lead } = await threadRecord(args.workspaceId, args.threadId);
   canContact(thread, lead);
