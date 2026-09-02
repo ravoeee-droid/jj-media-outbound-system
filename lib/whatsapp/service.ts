@@ -82,7 +82,8 @@ export async function queueThread(workspaceId: string, threadId: string, enabled
   if (thread.consent !== "granted" || isSuppressed(lead.tags) || thread.status !== "open") throw new Error("Für den Tageslauf braucht der Kontakt eine dokumentierte Zustimmung und eine offene Unterhaltung.");
   const [contacted] = await db.select({ id: whatsappMessages.id }).from(whatsappMessages).where(and(eq(whatsappMessages.workspaceId, workspaceId), eq(whatsappMessages.threadId, threadId), inArray(whatsappMessages.status, ["sending", "sent", "delivered", "read", "unknown", "received"]))).limit(1);
   if (contacted) throw new Error("Mit diesem Kontakt gibt es bereits eine Unterhaltung. Bitte in der Inbox fortsetzen.");
-  await db.insert(whatsappQueue).values({ workspaceId, threadId }).onConflictDoUpdate({ target: [whatsappQueue.workspaceId, whatsappQueue.threadId], set: { status: "queued", error: "", updatedAt: new Date() }, setWhere: inArray(whatsappQueue.status, ["cancelled", "skipped"]) });
+  const saved = await db.insert(whatsappQueue).values({ workspaceId, threadId }).onConflictDoUpdate({ target: [whatsappQueue.workspaceId, whatsappQueue.threadId], set: { status: "queued", error: "", updatedAt: new Date() }, setWhere: inArray(whatsappQueue.status, ["cancelled", "skipped"]) }).returning();
+  if (!saved.length) throw new Error("Für diesen Kontakt läuft bereits ein Vorgang. Bitte den Status und gegebenenfalls den Entwurf in der Inbox prüfen.");
   await activity(workspaceId, lead.id, "Für den WhatsApp-Tageslauf freigegeben");
 }
 
@@ -351,6 +352,7 @@ export async function runWhatsappTick(workspaceId: string) {
   await db.insert(settings).values({ workspaceId, key: "jj_whatsapp_last_tick", value: new Date().toISOString() }).onConflictDoUpdate({ target: [settings.workspaceId, settings.key], set: { value: new Date().toISOString(), updatedAt: new Date() } });
   const config = await getAgentConfig(workspaceId);
   if (!config.enabled) return { reason: "paused" };
+  if (config.defaultMode === "manual") return runDailyOutreach(workspaceId);
   const pending = await db.select().from(whatsappThreads).where(and(eq(whatsappThreads.workspaceId, workspaceId), eq(whatsappThreads.status, "open"), inArray(whatsappThreads.mode, ["copilot", "autopilot"]), eq(whatsappThreads.consent, "granted"), sql`${whatsappThreads.lastInboundId} is not null`, sql`not exists (select 1 from ${whatsappMessages} where ${whatsappMessages.workspaceId} = ${whatsappThreads.workspaceId} and ${whatsappMessages.idempotencyKey} = 'reply:' || ${whatsappThreads.lastInboundId}::text)`)).orderBy(asc(whatsappThreads.lastMessageAt)).limit(1);
   // At most one expensive turn per tick keeps the worker bounded.
   for (const thread of pending) {
