@@ -1,14 +1,14 @@
 import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db";
-import { leads, settings, whatsappQueue, whatsappReservations, whatsappThreads } from "@/db/schema";
+import { leads, settings, whatsappMessages, whatsappQueue, whatsappReservations, whatsappThreads } from "@/db/schema";
 import { availableSlots, bookSlot, calendarConnected, localClock } from "@/lib/whatsapp/calendar";
 import { getAgentConfig, withLease } from "@/lib/whatsapp/config";
 import { limitedJson, whatsappError, whatsappWorkspace } from "@/lib/whatsapp/http";
 import { modeSchema } from "@/lib/whatsapp/policy";
 import { getBridgeStatus } from "@/lib/whatsapp/provider";
 import { secureAccessConfigured } from "@/lib/whatsapp/access";
-import { createReply, handoff, openThread, queueThread, reconcileMessage, sendManual, threadMessages, threadRecord, updateThread } from "@/lib/whatsapp/service";
+import { createReply, handoff, openThread, queueThread, reconcileMessage, reviewQueueItem, sendManual, threadMessages, threadRecord, updateThread } from "@/lib/whatsapp/service";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -19,6 +19,7 @@ const inputSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("update"), threadId: z.string().uuid(), patch: z.object({ mode: modeSchema.optional(), consent: z.enum(["unknown", "granted", "revoked"]).optional(), consentNote: z.string().max(2_000).optional(), status: z.enum(["open", "handoff", "closed"]).optional(), unread: z.boolean().optional() }) }),
   z.object({ action: z.literal("handoff"), threadId: z.string().uuid() }),
   z.object({ action: z.literal("queue"), threadId: z.string().uuid(), enabled: z.boolean() }),
+  z.object({ action: z.literal("review"), queueId: z.string().uuid(), decision: z.enum(["approve", "reject"]) }),
   z.object({ action: z.literal("draft"), threadId: z.string().uuid() }),
   z.object({ action: z.literal("reconcile"), messageId: z.string().uuid() }),
   z.object({ action: z.literal("send"), threadId: z.string().uuid(), body: z.string().trim().max(4_000), key: z.string().uuid(), expectedVersion: z.number().int().nonnegative(), attachmentId: z.string().uuid().optional(), draftId: z.string().uuid().optional() }),
@@ -41,9 +42,9 @@ export async function GET(request: Request) {
     const db = getDb();
     const [config, threads, leadRows, queue, connection, calendar, heartbeat] = await Promise.all([
       getAgentConfig(workspace.workspaceId),
-      db.select({ thread: whatsappThreads, lead: { id: leads.id, company: leads.company, contact: leads.contact, phone: leads.phone, pipelineStage: leads.pipelineStage } }).from(whatsappThreads).innerJoin(leads, and(eq(leads.id, whatsappThreads.leadId), eq(leads.workspaceId, whatsappThreads.workspaceId))).where(eq(whatsappThreads.workspaceId, workspace.workspaceId)).orderBy(desc(whatsappThreads.updatedAt)).limit(500),
-      db.select({ id: leads.id, company: leads.company, contact: leads.contact, phone: leads.phone }).from(leads).where(eq(leads.workspaceId, workspace.workspaceId)).orderBy(desc(leads.salesPriority)).limit(1_000),
-      db.select().from(whatsappQueue).where(eq(whatsappQueue.workspaceId, workspace.workspaceId)).orderBy(desc(whatsappQueue.updatedAt)).limit(1_000),
+      db.select({ thread: whatsappThreads, lead: { id: leads.id, company: leads.company, contact: leads.contact, phone: leads.phone, pipelineStage: leads.pipelineStage, summary: leads.summary, websiteUrl: leads.websiteUrl, salesPriority: leads.salesPriority } }).from(whatsappThreads).innerJoin(leads, and(eq(leads.id, whatsappThreads.leadId), eq(leads.workspaceId, whatsappThreads.workspaceId))).where(eq(whatsappThreads.workspaceId, workspace.workspaceId)).orderBy(desc(whatsappThreads.updatedAt)).limit(500),
+      db.select({ id: leads.id, company: leads.company, contact: leads.contact, phone: leads.phone, summary: leads.summary, websiteUrl: leads.websiteUrl, salesPriority: leads.salesPriority }).from(leads).where(eq(leads.workspaceId, workspace.workspaceId)).orderBy(desc(leads.salesPriority)).limit(1_000),
+      db.select({ id: whatsappQueue.id, threadId: whatsappQueue.threadId, status: whatsappQueue.status, error: whatsappQueue.error, messageId: whatsappQueue.messageId, sentAt: whatsappQueue.sentAt, createdAt: whatsappQueue.createdAt, updatedAt: whatsappQueue.updatedAt, body: whatsappMessages.body }).from(whatsappQueue).leftJoin(whatsappMessages, and(eq(whatsappMessages.workspaceId, whatsappQueue.workspaceId), eq(whatsappMessages.id, whatsappQueue.messageId))).where(eq(whatsappQueue.workspaceId, workspace.workspaceId)).orderBy(desc(whatsappQueue.updatedAt)).limit(1_000),
       getBridgeStatus(), calendarConnected(workspace.user.id),
       db.select().from(settings).where(and(eq(settings.workspaceId, workspace.workspaceId), eq(settings.key, "jj_whatsapp_last_tick"))).limit(1),
     ]);
@@ -63,6 +64,7 @@ export async function POST(request: Request) {
       case "update": return Response.json({ thread: await updateThread(workspaceId, input.threadId, input.patch) });
       case "handoff": await handoff(workspaceId, input.threadId, "Vom Team übernommen"); return Response.json({ ok: true });
       case "queue": await queueThread(workspaceId, input.threadId, input.enabled); return Response.json({ ok: true });
+      case "review": return Response.json(await reviewQueueItem(workspaceId, input.queueId, input.decision));
       case "draft": return Response.json({ message: await createReply(workspaceId, input.threadId) });
       case "reconcile": return Response.json(await reconcileMessage(workspaceId, input.messageId));
       case "send":

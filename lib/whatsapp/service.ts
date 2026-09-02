@@ -42,7 +42,7 @@ async function activity(workspaceId: string, leadId: string, title: string, deta
 export async function handoff(workspaceId: string, threadId: string, reason: string) {
   const { lead } = await threadRecord(workspaceId, threadId);
   await getDb().update(whatsappThreads).set({ mode: "manual", status: "handoff", handoffReason: reason, version: sql`${whatsappThreads.version} + 1`, updatedAt: new Date() }).where(and(eq(whatsappThreads.workspaceId, workspaceId), eq(whatsappThreads.id, threadId)));
-  await getDb().update(whatsappQueue).set({ status: "cancelled", error: reason, updatedAt: new Date() }).where(and(eq(whatsappQueue.workspaceId, workspaceId), eq(whatsappQueue.threadId, threadId), eq(whatsappQueue.status, "queued")));
+  await getDb().update(whatsappQueue).set({ status: "cancelled", error: reason, updatedAt: new Date() }).where(and(eq(whatsappQueue.workspaceId, workspaceId), eq(whatsappQueue.threadId, threadId), inArray(whatsappQueue.status, ["review", "queued"])));
   const [task] = await getDb().select({ id: tasks.id }).from(tasks).where(and(eq(tasks.workspaceId, workspaceId), eq(tasks.leadId, lead.id), eq(tasks.type, "whatsapp_handoff"), eq(tasks.status, "open"))).limit(1);
   if (!task) await getDb().insert(tasks).values({ workspaceId, leadId: lead.id, title: `WhatsApp übernehmen: ${lead.company}`, type: "whatsapp_handoff", priority: "high", dueAt: new Date() });
   await activity(workspaceId, lead.id, "WhatsApp an das Team übergeben", reason);
@@ -67,7 +67,7 @@ export async function updateThread(workspaceId: string, threadId: string, patch:
   await db.update(whatsappThreads).set(next).where(and(eq(whatsappThreads.workspaceId, workspaceId), eq(whatsappThreads.id, threadId)));
   if (patch.consent) await activity(workspaceId, lead.id, patch.consent === "granted" ? "WhatsApp-Zustimmung dokumentiert" : "WhatsApp-Zustimmung geändert", patch.consentNote || patch.consent);
   if (patch.consent === "revoked" || patch.status === "closed") {
-    await db.update(whatsappQueue).set({ status: "cancelled", error: "Kontakt gestoppt", updatedAt: new Date() }).where(and(eq(whatsappQueue.workspaceId, workspaceId), eq(whatsappQueue.threadId, threadId), eq(whatsappQueue.status, "queued")));
+    await db.update(whatsappQueue).set({ status: "cancelled", error: "Kontakt gestoppt", updatedAt: new Date() }).where(and(eq(whatsappQueue.workspaceId, workspaceId), eq(whatsappQueue.threadId, threadId), inArray(whatsappQueue.status, ["review", "queued"])));
     await db.update(tasks).set({ status: "cancelled", updatedAt: new Date() }).where(and(eq(tasks.workspaceId, workspaceId), eq(tasks.leadId, lead.id), eq(tasks.type, "whatsapp_followup"), eq(tasks.status, "open")));
   }
   return (await threadRecord(workspaceId, threadId)).thread;
@@ -77,15 +77,48 @@ export async function queueThread(workspaceId: string, threadId: string, enabled
   const { thread, lead } = await threadRecord(workspaceId, threadId);
   const db = getDb();
   if (!enabled) {
-    await db.update(whatsappQueue).set({ status: "cancelled", updatedAt: new Date() }).where(and(eq(whatsappQueue.workspaceId, workspaceId), eq(whatsappQueue.threadId, threadId), eq(whatsappQueue.status, "queued")));
+    await db.update(whatsappQueue).set({ status: "cancelled", error: "Vom Team aus dem Tageslauf genommen", updatedAt: new Date() }).where(and(eq(whatsappQueue.workspaceId, workspaceId), eq(whatsappQueue.threadId, threadId), inArray(whatsappQueue.status, ["review", "queued"])));
     return;
   }
   if (thread.consent !== "granted" || isSuppressed(lead.tags) || thread.status !== "open") throw new Error("Für den Tageslauf braucht der Kontakt eine dokumentierte Zustimmung und eine offene Unterhaltung.");
   const [contacted] = await db.select({ id: whatsappMessages.id }).from(whatsappMessages).where(and(eq(whatsappMessages.workspaceId, workspaceId), eq(whatsappMessages.threadId, threadId), inArray(whatsappMessages.status, ["sending", "sent", "delivered", "read", "unknown", "received"]))).limit(1);
   if (contacted) throw new Error("Mit diesem Kontakt gibt es bereits eine Unterhaltung. Bitte in der Inbox fortsetzen.");
-  const saved = await db.insert(whatsappQueue).values({ workspaceId, threadId }).onConflictDoUpdate({ target: [whatsappQueue.workspaceId, whatsappQueue.threadId], set: { status: "queued", error: "", updatedAt: new Date() }, setWhere: inArray(whatsappQueue.status, ["cancelled", "skipped"]) }).returning();
+  const saved = await db.insert(whatsappQueue).values({ workspaceId, threadId, status: "review", error: "Erstnachricht wird vorbereitet" }).onConflictDoUpdate({ target: [whatsappQueue.workspaceId, whatsappQueue.threadId], set: { status: "review", messageId: null, error: "Erstnachricht wird vorbereitet", attemptedAt: null, sentAt: null, updatedAt: new Date() }, setWhere: inArray(whatsappQueue.status, ["cancelled", "skipped"]) }).returning();
   if (!saved.length) throw new Error("Für diesen Kontakt läuft bereits ein Vorgang. Bitte den Status und gegebenenfalls den Entwurf in der Inbox prüfen.");
-  await activity(workspaceId, lead.id, "Für den WhatsApp-Tageslauf freigegeben");
+  try {
+    const message = await createReply(workspaceId, threadId, false, true);
+    if (!message || message.metadata.handoff === true) {
+      await db.update(whatsappQueue).set({ status: "review", messageId: message?.id, error: "Entwurf bitte persönlich prüfen", updatedAt: new Date() }).where(and(eq(whatsappQueue.workspaceId, workspaceId), eq(whatsappQueue.threadId, threadId)));
+      return;
+    }
+    await db.update(whatsappQueue).set({ status: "review", messageId: message.id, error: "Freigabe durch das Team erforderlich", updatedAt: new Date() }).where(and(eq(whatsappQueue.workspaceId, workspaceId), eq(whatsappQueue.threadId, threadId)));
+    await activity(workspaceId, lead.id, "WhatsApp-Erstnachricht zur Freigabe vorbereitet", message.body, { messageId: message.id });
+  } catch (error) {
+    await db.update(whatsappQueue).set({ status: "review", error: error instanceof Error ? error.message : "Entwurf konnte nicht vorbereitet werden", updatedAt: new Date() }).where(and(eq(whatsappQueue.workspaceId, workspaceId), eq(whatsappQueue.threadId, threadId)));
+  }
+}
+
+export async function reviewQueueItem(workspaceId: string, queueId: string, decision: "approve" | "reject") {
+  const db = getDb();
+  const [item] = await db.select().from(whatsappQueue).where(and(eq(whatsappQueue.workspaceId, workspaceId), eq(whatsappQueue.id, queueId))).limit(1);
+  if (!item) throw new Error("Der Freigabe-Vorgang wurde nicht gefunden.");
+  const { thread, lead } = await threadRecord(workspaceId, item.threadId);
+  if (decision === "reject") {
+    if (["sent", "sending"].includes(item.status)) throw new Error("Diese Nachricht kann nicht mehr abgelehnt werden.");
+    await db.update(whatsappQueue).set({ status: "cancelled", error: "Vom Team abgelehnt", updatedAt: new Date() }).where(and(eq(whatsappQueue.workspaceId, workspaceId), eq(whatsappQueue.id, queueId)));
+    await activity(workspaceId, lead.id, "WhatsApp-Erstnachricht abgelehnt");
+    return { status: "cancelled" };
+  }
+  if (item.status === "queued") return { status: "queued" };
+  if (item.status !== "review") throw new Error("Nur Nachrichten in der Freigabe können bestätigt werden.");
+  canContact(thread, lead);
+  if (!item.messageId) throw new Error("Für diesen Kontakt liegt noch kein freigabefähiger Entwurf vor.");
+  const [message] = await db.select().from(whatsappMessages).where(and(eq(whatsappMessages.workspaceId, workspaceId), eq(whatsappMessages.id, item.messageId), eq(whatsappMessages.threadId, item.threadId))).limit(1);
+  if (!message || message.status !== "draft" || message.metadata.actor !== "outreach") throw new Error("Der Entwurf ist nicht mehr aktuell. Bitte den Kontakt neu vorbereiten.");
+  if (message.metadata.handoff === true) throw new Error("Dieser Entwurf benötigt eine persönliche Prüfung und kann nicht automatisch freigegeben werden.");
+  await db.update(whatsappQueue).set({ status: "queued", error: "Freigegeben – wartet auf kontrollierten Versand", updatedAt: new Date() }).where(and(eq(whatsappQueue.workspaceId, workspaceId), eq(whatsappQueue.id, queueId), eq(whatsappQueue.status, "review")));
+  await activity(workspaceId, lead.id, "WhatsApp-Erstnachricht freigegeben", message.body, { messageId: message.id });
+  return { status: "queued" };
 }
 
 function canContact(thread: typeof whatsappThreads.$inferSelect, lead: typeof leads.$inferSelect) {
@@ -237,6 +270,17 @@ export async function createReply(workspaceId: string, threadId: string, automat
     if (selected && automatic && mode === "autopilot") {
       const result = await bookSlot({ userId: workspace.ownerId, workspaceId, threadId, lead, config, slot: selected, expectedVersion: thread.version, automatic: true });
       decision = { reply: `Ihr Potenzialgespräch mit ${config.handoffName} ist für ${result.label} (${config.timezone}) gebucht.${result.joinUrl ? `\n\nZum Gespräch: ${result.joinUrl}` : " Unser Team meldet sich mit den Gesprächsdetails."}`, intent: "booking", confidence: 1, handoff: false, reason: "Vom Google Kalender bestätigt", summary: `Termin: ${result.label}`, knowledgeIds: [], followUpAt: null };
+    } else if (outreach) {
+      decision = {
+        reply: `Hallo, bin ich da bei ${lead.company} gelandet?`,
+        intent: "other",
+        confidence: 1,
+        handoff: false,
+        reason: "Fest definierter, vom Team kontrollierbarer Gesprächseinstieg.",
+        summary: "Erstkontakt zur Identitätsbestätigung vorbereitet.",
+        knowledgeIds: [],
+        followUpAt: null,
+      };
     } else {
       decision = await draftReply({ config, history, lead: safeLeadContext(lead), slots: thread.offeredSlots, outreach, workspaceId });
       if (decision.intent === "booking" && !decision.handoff) {
@@ -281,7 +325,7 @@ export async function receiveMessage(workspaceId: string, input: { id: string; p
   const [message] = await db.insert(whatsappMessages).values({ workspaceId, threadId: thread.id, direction: "inbound", status: "received", body: input.body, kind: input.kind, providerId: input.id, idempotencyKey: `inbound:${input.id}`, metadata: { providerTimestamp: input.timestamp } }).onConflictDoNothing().returning();
   if (message) {
     await db.update(whatsappThreads).set({ lastInboundId: message.id, lastMessageAt: new Date(), unread: true, version: sql`${whatsappThreads.version} + 1`, updatedAt: new Date() }).where(and(eq(whatsappThreads.workspaceId, workspaceId), eq(whatsappThreads.id, thread.id)));
-    await db.update(whatsappQueue).set({ status: "cancelled", error: "Kontakt hat geantwortet", updatedAt: new Date() }).where(and(eq(whatsappQueue.workspaceId, workspaceId), eq(whatsappQueue.threadId, thread.id), eq(whatsappQueue.status, "queued")));
+    await db.update(whatsappQueue).set({ status: "cancelled", error: "Kontakt hat geantwortet", updatedAt: new Date() }).where(and(eq(whatsappQueue.workspaceId, workspaceId), eq(whatsappQueue.threadId, thread.id), inArray(whatsappQueue.status, ["review", "queued"])));
     await activity(workspaceId, thread.leadId, "WhatsApp-Antwort erhalten", input.body, { messageId: message.id });
   }
   if (isOptOut(input.body)) {
@@ -316,7 +360,7 @@ export async function runDailyOutreach(workspaceId: string) {
     const rows = await db.select().from(whatsappQueue).where(and(eq(whatsappQueue.workspaceId, workspaceId), gt(whatsappQueue.attemptedAt, new Date(Date.now() - 36 * 3_600_000))));
     const today = rows.filter((row) => row.attemptedAt && localClock(row.attemptedAt, config.timezone).day === clock.day);
     if (today.length >= config.dailyOutreachLimit) return { sent: 0, reason: "daily_limit" };
-    if (today.some((row) => row.attemptedAt && Date.now() - row.attemptedAt.getTime() < 120_000)) return { sent: 0, reason: "spacing" };
+    if (today.some((row) => row.attemptedAt && Date.now() - row.attemptedAt.getTime() < 180_000)) return { sent: 0, reason: "spacing" };
     const [queued] = await db.select().from(whatsappQueue).where(and(eq(whatsappQueue.workspaceId, workspaceId), eq(whatsappQueue.status, "queued"))).orderBy(asc(whatsappQueue.createdAt)).limit(1);
     if (!queued) return { sent: 0, reason: "empty" };
     const { thread, lead } = await threadRecord(workspaceId, queued.threadId);

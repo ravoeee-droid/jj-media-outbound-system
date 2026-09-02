@@ -68,3 +68,13 @@ npm run build
 ```
 
 Die Tests verwenden keine Kundennummern, WhatsApp-Sitzungen, KI-Kontingente oder echten Kalendertermine. Sie prüfen unter anderem doppelte Aufrufe, unklare Sendebestätigungen, Neustarts, manipulierte Webhooks, Wissensfreigaben und mehrdeutige Terminauswahl. Ein vollständiger Integrationstest mit einer eigenen freigegebenen Testnummer und einem Testkalender folgt erst nach Einrichtung der Verbindungen.
+
+## Manuelle Freigabe für Erstnachrichten
+
+- Neue Erstkontakte werden nie direkt aus der Vorbereitung versendet. Sie landen zuerst im Tageslauf mit Status `review`.
+- Der erste Text ist deterministisch: `Hallo, bin ich da bei <Unternehmensname> gelandet?`
+- Das Team sieht Unternehmen, Lead-Zusammenfassung und Nachricht nebeneinander und entscheidet `Freigeben` oder `Ablehnen`.
+- Nur freigegebene Einträge wechseln auf `queued`. Der Tageslauf verarbeitet sie innerhalb des erlaubten Zeitfensters mit mindestens drei Minuten Abstand.
+- Die Freigabe ersetzt keine WhatsApp-Einwilligung. Ohne dokumentierte Zustimmung bleibt der Versand technisch gesperrt.
+- Opt-out, Sperr-Tags, geschlossene Chats oder eine Team-Übernahme stoppen auch bereits vorbereitete Einträge.
+
