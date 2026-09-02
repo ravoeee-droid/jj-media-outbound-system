@@ -12,7 +12,11 @@ if errorlevel 1 (
 if not exist "node_modules\@whiskeysockets\baileys" (
   echo WhatsApp-Dienst wird vervollstaendigt ...
   call npm install --omit=dev
-  if errorlevel 1 pause & exit /b 1
+  if errorlevel 1 (
+    echo Installation der Abhaengigkeiten fehlgeschlagen.
+    pause
+    exit /b 1
+  )
 )
 node server.mjs
 if errorlevel 1 (
