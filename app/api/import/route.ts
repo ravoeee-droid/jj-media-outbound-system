@@ -2,11 +2,12 @@ import { and, eq, or } from "drizzle-orm";
 import { getDb } from "@/db";
 import { activities, leads } from "@/db/schema";
 import {
+  leadUrlIdentity,
   normalizeCompany,
   normalizeImport,
+  normalizeWebsite,
   slugify,
 } from "@/lib/leads";
-import { instagramUsername, normalizeInstagramProfile } from "@/lib/social-profile";
 import { apiError, requireWorkspace } from "@/lib/workspace";
 
 export const runtime = "nodejs";
@@ -18,7 +19,7 @@ export async function POST(request: Request) {
     const payload = (await request.json()) as { leads?: unknown[]; raw?: unknown; source?: string };
     const incoming = normalizeImport(payload.raw ?? payload.leads ?? []).slice(0, 500);
     if (!incoming.length) {
-      return Response.json({ error: "Keine importierbaren Unternehmen gefunden." }, { status: 400 });
+      return Response.json({ error: "Keine importierbaren Unternehmen gefunden. Unterstützt werden u. a. company/companyName/firma/unternehmen sowie Google-Maps-Exporte mit title + website + phone." }, { status: 400 });
     }
     const db = getDb();
     let created = 0;
@@ -29,10 +30,8 @@ export async function POST(request: Request) {
     for (const item of incoming) {
       const company = item.company.trim();
       const normalizedCompany = normalizeCompany(company);
-      const websiteUrl = (() => {
-        try { return normalizeInstagramProfile(item.websiteUrl ?? ""); } catch { return ""; }
-      })();
-      const domain = instagramUsername(websiteUrl);
+      const websiteUrl = normalizeWebsite(item.websiteUrl ?? "");
+      const domain = leadUrlIdentity(websiteUrl);
       if (!normalizedCompany) {
         skipped += 1;
         continue;
@@ -83,6 +82,9 @@ export async function POST(request: Request) {
           phone: item.phone || existing.phone,
           websiteUrl: websiteUrl || existing.websiteUrl,
           domain: domain || existing.domain,
+          city: item.city || existing.city,
+          region: item.region || existing.region,
+          category: item.category && item.category !== "other" ? item.category : existing.category,
           ceo: item.ceo || existing.ceo,
           jobCount: Math.max(existing.jobCount, item.jobCount ?? 0),
           jobTitles: [...new Set([...existing.jobTitles, ...(item.jobTitles ?? [])])],
@@ -98,7 +100,7 @@ export async function POST(request: Request) {
           userId: workspace.user.id,
           type: "import_updated",
           title: "Importdaten ergänzt",
-          detail: `${item.sourceRecords ?? 1} Quelldatensätze zusammengeführt. Instagram-Aufnahme startet erst bei der manuellen Video-Erstellung.`,
+          detail: `${item.sourceRecords ?? 1} Quelldatensätze zusammengeführt.`,
         });
         if (websiteUrl || existing.websiteUrl) enrichmentCandidates += 1;
         updated += 1;
@@ -123,7 +125,7 @@ export async function POST(request: Request) {
         userId: workspace.user.id,
         type: "imported",
         title: "Lead importiert",
-        detail: `Quelle: ${lead.source}. ${lead.sourceRecords} Datensätze zusammengeführt. Instagram-Aufnahme startet nur nach dem manuellen Render-Klick.`,
+        detail: `Quelle: ${lead.source}. ${lead.sourceRecords} Datensätze zusammengeführt.`,
       });
       if (lead.websiteUrl) enrichmentCandidates += 1;
       created += 1;
