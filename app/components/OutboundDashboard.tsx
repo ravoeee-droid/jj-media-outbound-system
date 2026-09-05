@@ -406,11 +406,10 @@ export default function OutboundDashboard({ userName = "JJ-Media" }: { userName?
     }
   }
 
-  async function openManualSTRATO Mail() {
+  async function openManualStratoMail() {
     if (!emailDraft) return;
     const copiedRich = await copyRichEmail();
-    const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(emailDraft.lead.email)}&su=${encodeURIComponent(emailDraft.subject)}`;
-    window.open(gmailUrl, "_blank", "noopener,noreferrer");
+    window.open("https://webmail.strato.de/", "_blank", "noopener,noreferrer");
     setManualComposerOpened(true);
     showToast(copiedRich
       ? "STRATO Mail ist offen. Füge die Rich-Mail mit Strg+V ein und sende sie."
@@ -995,7 +994,7 @@ export default function OutboundDashboard({ userName = "JJ-Media" }: { userName?
             <div className="email-preview__actions">
               <button className="button button--ghost" onClick={() => void copyRichEmail().then(() => showToast("Rich-Mail inklusive GIF kopiert."))}>Rich-Mail kopieren</button>
               {integrations.mail && <button className="button button--primary" onClick={() => void sendDirect()} disabled={sendingEmail}>{sendingEmail ? "Wird gesendet …" : "Jetzt über STRATO Mail senden →"}</button>}
-              {!integrations.mail && !manualComposerOpened && <button className="button button--primary" onClick={() => void openManualSTRATO Mail()}>Kopieren & STRATO Mail öffnen →</button>}
+              {!integrations.mail && !manualComposerOpened && <button className="button button--primary" onClick={() => void openManualStratoMail()}>Kopieren & STRATO Mail öffnen →</button>}
               {!integrations.mail && manualComposerOpened && <button className="button button--primary" onClick={() => void confirmManualSent()} disabled={sendingEmail}>{sendingEmail ? "Wird gespeichert …" : "Ich habe die Mail gesendet ✓"}</button>}
             </div>
             <p className="security-note">{integrations.mail ? "Der API-Versand erfolgt genau einmal. Erst danach werden CRM-Status und Follow-ups gesetzt." : manualComposerOpened ? "Bestätige den Versand erst, nachdem du in STRATO Mail wirklich auf Senden geklickt hast." : "STRATO Mail öffnet sich leer. Drücke dort Strg+V; GIF-Vorschau, Play-Button und Link werden gemeinsam eingefügt."}</p>
