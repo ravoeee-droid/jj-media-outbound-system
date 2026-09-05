@@ -21,6 +21,8 @@ if (!existsSync(configPath)) {
 }
 const config = JSON.parse(readFileSync(configPath, "utf8"));
 if (!config.baseUrl || !config.cookie || !config.workerId) throw new Error("Lokale Konfiguration unvollständig. INSTALL-WHATSAPP.bat erneut ausführen.");
+const ollamaModel = String(config.ollamaModel || "qwen3:4b");
+const ollamaUrl = "http://127.0.0.1:11434";
 
 function acquirePid() {
   if (existsSync(pidPath)) {
@@ -101,12 +103,79 @@ let phone = "";
 let qrData = "";
 let stopping = false;
 let pumpBusy = false;
+let aiPumpBusy = false;
+let aiReady = false;
+let aiLastError = "";
 const inFlight = new Map();
 const logger = pino({ level: "silent" });
 
+async function checkOllama() {
+  try {
+    const response = await fetch(`${ollamaUrl}/api/tags`, { signal: AbortSignal.timeout(4_000), cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const payload = await response.json();
+    const models = Array.isArray(payload.models) ? payload.models : [];
+    const installed = models.some((entry) => entry?.name === ollamaModel || entry?.model === ollamaModel);
+    aiReady = installed;
+    aiLastError = installed ? "" : `Modell ${ollamaModel} fehlt. INSTALL-WHATSAPP.bat erneut ausführen.`;
+    return aiReady;
+  } catch (error) {
+    aiReady = false;
+    aiLastError = `Ollama nicht erreichbar: ${error.message}`;
+    return false;
+  }
+}
+
 async function statusHeartbeat() {
-  try { await api({ action: "status", workerId: config.workerId, connected, phone, qr: connected ? "" : qrData, version: "baileys-6.7.24" }, 20_000); }
+  try { await api({ action: "status", workerId: config.workerId, connected, phone, qr: connected ? "" : qrData, version: "baileys-6.7.24+ollama-1", aiReady, aiModel: ollamaModel }, 20_000); }
   catch (error) { console.warn(`Status: ${error.message}`); }
+}
+
+async function runLocalAi(job) {
+  if (!aiReady && !await checkOllama()) throw new Error(aiLastError || "Ollama ist nicht bereit.");
+  const response = await fetch(`${ollamaUrl}/api/chat`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      model: ollamaModel,
+      messages: Array.isArray(job.messages) ? job.messages : [],
+      stream: false,
+      think: false,
+      format: job.format || "json",
+      options: { temperature: 0.2, num_predict: 1400, top_p: 0.9 },
+      keep_alive: "15m",
+    }),
+    signal: AbortSignal.timeout(55_000),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    if (response.status >= 500) aiReady = false;
+    throw new Error(payload.error || `Ollama meldet HTTP ${response.status}`);
+  }
+  const content = payload?.message?.content;
+  if (typeof content !== "string" || !content.trim()) throw new Error("Ollama hat keinen nutzbaren Entwurf geliefert.");
+  aiReady = true;
+  aiLastError = "";
+  return { content: content.trim(), model: String(payload.model || ollamaModel) };
+}
+
+async function aiPump() {
+  if (aiPumpBusy || stopping) return;
+  aiPumpBusy = true;
+  try {
+    const result = await api({ action: "ai_pull", workerId: config.workerId }, 20_000);
+    const job = result.job;
+    if (!job) return;
+    try {
+      const output = await runLocalAi(job);
+      await api({ action: "ai_result", workerId: config.workerId, jobId: job.id, model: output.model, content: output.content }, 20_000);
+    } catch (error) {
+      await api({ action: "ai_result", workerId: config.workerId, jobId: job.id, model: ollamaModel, error: error.message || "Lokale KI fehlgeschlagen" }, 20_000).catch(() => undefined);
+      console.warn(`KI: ${error.message}`);
+    }
+  } catch (error) {
+    console.warn(`KI-Pumpe: ${error.message}`);
+  } finally { aiPumpBusy = false; }
 }
 
 function contentForSend(message) {
@@ -171,7 +240,7 @@ async function handleMessage(entry) {
   if (key.fromMe && [...inFlight.values()].some((row) => row.to === phoneNumber && row.body === content.body)) return;
   if (key.fromMe && Object.values(ledger).some((row) => row?.providerId === key.id)) return;
   try {
-    await api({ action: "event", workerId: config.workerId, id: key.id, phone: phoneNumber, body: content.body, kind: content.kind, timestamp: new Date(Number(entry.messageTimestamp || Date.now() / 1000) * 1000).toISOString(), fromMe: key.fromMe === true }, 40_000);
+    await api({ action: "event", workerId: config.workerId, id: key.id, phone: phoneNumber, body: content.body, kind: content.kind, timestamp: new Date(Number(entry.messageTimestamp || Date.now() / 1000) * 1000).toISOString(), fromMe: key.fromMe === true }, 115_000);
   } catch (error) { console.warn(`Chat-Sync: ${error.message}`); }
 }
 
@@ -205,6 +274,7 @@ async function connect() {
       phone = digitsFromJid(sock.user?.id || "");
       qrData = "";
       console.log(`✓ WhatsApp verbunden${phone ? ` (+${phone})` : ""}. Outbound Tool ist bereit.`);
+      console.log(aiReady ? `✓ Lokale KI bereit (${ollamaModel}).` : `! Lokale KI noch nicht bereit: ${aiLastError || "Ollama wird geprüft"}`);
       await statusHeartbeat();
       void api({ action: "tick", workerId: config.workerId }).catch(() => undefined);
     }
@@ -225,12 +295,14 @@ async function connect() {
 
 const statusTimer = setInterval(() => void statusHeartbeat(), 20_000);
 const pumpTimer = setInterval(() => void pump(), 2_500);
+const aiTimer = setInterval(() => void aiPump(), 1_200);
+const ollamaTimer = setInterval(() => void checkOllama().then(() => statusHeartbeat()), 30_000);
 const tickTimer = setInterval(() => { if (connected && !stopping) void api({ action: "tick", workerId: config.workerId }, 110_000).catch((error) => console.warn(`Automatik: ${error.message}`)); }, 60_000);
 
 async function shutdown() {
   if (stopping) return;
   stopping = true;
-  clearInterval(statusTimer); clearInterval(pumpTimer); clearInterval(tickTimer);
+  clearInterval(statusTimer); clearInterval(pumpTimer); clearInterval(aiTimer); clearInterval(ollamaTimer); clearInterval(tickTimer);
   connected = false; qrData = "";
   try { await statusHeartbeat(); } catch { /* best effort */ }
   try { unlinkSync(pidPath); } catch { /* best effort */ }
@@ -240,5 +312,6 @@ process.once("SIGINT", shutdown);
 process.once("SIGTERM", shutdown);
 process.once("exit", () => { try { unlinkSync(pidPath); } catch { /* best effort */ } });
 
-console.log("JJ-Media WhatsApp startet – kein Chromium, kein VPS, kein Tunnel.");
+console.log("JJ-Media WhatsApp startet – Baileys + lokale Ollama-KI, kein Dify, kein KI-API-Abo.");
+void checkOllama().then(() => statusHeartbeat());
 connect().catch((error) => { console.error(error); shutdown(); });

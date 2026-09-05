@@ -13,14 +13,29 @@ export const maxDuration = 120;
 export const dynamic = "force-dynamic";
 
 const STATUS_KEY = "jj_whatsapp_worker_status";
+const AI_JOB_PREFIX = "jj_ollama_job:";
 const inputSchema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("status"), workerId: z.string().uuid(), connected: z.boolean(), phone: z.string().max(40).default(""), qr: z.string().max(120_000).default(""), version: z.string().max(80).default("") }),
+  z.object({ action: z.literal("status"), workerId: z.string().uuid(), connected: z.boolean(), phone: z.string().max(40).default(""), qr: z.string().max(120_000).default(""), version: z.string().max(80).default(""), aiReady: z.boolean().default(false), aiModel: z.string().max(120).default("") }),
   z.object({ action: z.literal("tick"), workerId: z.string().uuid() }),
   z.object({ action: z.literal("pull"), workerId: z.string().uuid() }),
+  z.object({ action: z.literal("ai_pull"), workerId: z.string().uuid() }),
+  z.object({ action: z.literal("ai_result"), workerId: z.string().uuid(), jobId: z.string().min(1).max(160), model: z.string().max(120).default("ollama-local"), content: z.string().max(24_000).optional(), error: z.string().max(2_000).optional() }),
   z.object({ action: z.literal("ack"), workerId: z.string().uuid(), messageId: z.string().uuid(), status: z.enum(["sent", "unknown"]), providerId: z.string().min(1).max(200).optional(), error: z.string().max(1_000).optional() }),
   z.object({ action: z.literal("event"), workerId: z.string().uuid(), id: z.string().min(1).max(200), phone: z.string().max(40), body: z.string().max(8_000), kind: z.enum(["text", "image", "audio", "document", "video", "other"]), timestamp: z.string().datetime(), fromMe: z.boolean().optional() }),
   z.object({ action: z.literal("receipt"), workerId: z.string().uuid(), providerId: z.string().min(1).max(200), status: z.enum(["sent", "delivered", "read"]) }),
 ]);
+
+type StoredAiJob = {
+  state?: "pending" | "claimed" | "done" | "error";
+  createdAt?: string;
+  claimedAt?: string;
+  workerId?: string;
+  messages?: Array<{ role: "system" | "user" | "assistant"; content: string }>;
+  format?: Record<string, unknown>;
+  model?: string;
+  content?: string;
+  error?: string;
+};
 
 function stoppedReason(actor: string, thread: typeof whatsappThreads.$inferSelect, lead: typeof leads.$inferSelect, config: Awaited<ReturnType<typeof getAgentConfig>>, metadata: Record<string, unknown>) {
   if (thread.consent !== "granted" || thread.status === "closed" || lead.pipelineStage === "lost" || isSuppressed(lead.tags)) return "Kontakt wurde vor dem Versand gestoppt";
@@ -36,6 +51,48 @@ async function markUnknown(workspaceId: string, messageId: string, error: string
   if (!message || ["sent", "delivered", "read"].includes(message.status)) return;
   await db.update(whatsappMessages).set({ status: "unknown", metadata: { ...message.metadata, error }, updatedAt: new Date() }).where(and(eq(whatsappMessages.workspaceId, workspaceId), eq(whatsappMessages.id, messageId)));
   await db.update(whatsappQueue).set({ status: "unknown", error, updatedAt: new Date() }).where(and(eq(whatsappQueue.workspaceId, workspaceId), eq(whatsappQueue.messageId, messageId)));
+}
+
+async function pullAiJob(workspaceId: string, workerId: string) {
+  const db = getDb();
+  const rows = await db.select().from(settings).where(and(
+    eq(settings.workspaceId, workspaceId),
+    sql`${settings.key} like ${`${AI_JOB_PREFIX}%`}`,
+  )).orderBy(asc(settings.updatedAt)).limit(8);
+  for (const row of rows) {
+    let job: StoredAiJob;
+    try { job = JSON.parse(row.value) as StoredAiJob; } catch { continue; }
+    const claimedAt = job.claimedAt ? Date.parse(job.claimedAt) : 0;
+    const claimExpired = job.state === "claimed" && (!Number.isFinite(claimedAt) || Date.now() - claimedAt > 90_000);
+    if (job.state !== "pending" && !claimExpired) continue;
+    if (!Array.isArray(job.messages) || !job.messages.length) continue;
+    const next: StoredAiJob = { ...job, state: "claimed", workerId, claimedAt: new Date().toISOString(), error: undefined };
+    const [claimed] = await db.update(settings).set({ value: JSON.stringify(next), updatedAt: new Date() }).where(and(
+      eq(settings.workspaceId, workspaceId),
+      eq(settings.key, row.key),
+      eq(settings.value, row.value),
+    )).returning();
+    if (!claimed) continue;
+    return { job: { id: row.key, messages: job.messages, format: job.format || { type: "object" } } };
+  }
+  return { job: null };
+}
+
+async function finishAiJob(workspaceId: string, input: Extract<z.infer<typeof inputSchema>, { action: "ai_result" }>) {
+  if (!input.jobId.startsWith(AI_JOB_PREFIX)) throw new Error("Ungültiger lokaler KI-Auftrag.");
+  const db = getDb();
+  const [row] = await db.select().from(settings).where(and(eq(settings.workspaceId, workspaceId), eq(settings.key, input.jobId))).limit(1);
+  if (!row) return { ignored: true };
+  let job: StoredAiJob;
+  try { job = JSON.parse(row.value) as StoredAiJob; } catch { throw new Error("Der lokale KI-Auftrag ist beschädigt."); }
+  if (job.workerId && job.workerId !== input.workerId) throw new Error("Dieser KI-Auftrag gehört zu einem anderen Laptop.");
+  if (job.state === "done" || job.state === "error") return { ok: true, duplicate: true };
+  if (!input.content && !input.error) throw new Error("Die lokale KI hat weder Ergebnis noch Fehler gemeldet.");
+  const next: StoredAiJob = input.error
+    ? { ...job, state: "error", workerId: input.workerId, model: input.model, error: input.error, content: undefined }
+    : { ...job, state: "done", workerId: input.workerId, model: input.model, content: input.content, error: undefined };
+  await db.update(settings).set({ value: JSON.stringify(next), updatedAt: new Date() }).where(and(eq(settings.workspaceId, workspaceId), eq(settings.key, input.jobId)));
+  return { ok: true };
 }
 
 async function pull(workspaceId: string, workerId: string) {
@@ -124,15 +181,17 @@ async function ack(workspaceId: string, input: Extract<z.infer<typeof inputSchem
 export async function POST(request: Request) {
   try {
     const workspace = await whatsappWorkspace();
-    const input = inputSchema.parse(await limitedJson(request, 160_000));
+    const input = inputSchema.parse(await limitedJson(request, 180_000));
     const workspaceId = workspace.workspaceId;
     if (input.action === "status") {
-      const value = JSON.stringify({ connected: input.connected, phone: input.phone, qr: input.qr, workerId: input.workerId, version: input.version, updatedAt: new Date().toISOString() });
+      const value = JSON.stringify({ connected: input.connected, phone: input.phone, qr: input.qr, workerId: input.workerId, version: input.version, aiReady: input.aiReady, aiModel: input.aiModel, updatedAt: new Date().toISOString() });
       await getDb().insert(settings).values({ workspaceId, key: STATUS_KEY, value }).onConflictDoUpdate({ target: [settings.workspaceId, settings.key], set: { value, updatedAt: new Date() } });
       return Response.json({ ok: true });
     }
     if (input.action === "tick") return Response.json(await runWhatsappTick(workspaceId));
     if (input.action === "pull") return Response.json(await pull(workspaceId, input.workerId));
+    if (input.action === "ai_pull") return Response.json(await pullAiJob(workspaceId, input.workerId));
+    if (input.action === "ai_result") return Response.json(await finishAiJob(workspaceId, input));
     if (input.action === "ack") return Response.json(await ack(workspaceId, input));
     if (input.action === "receipt") { await receiveReceipt(workspaceId, input.providerId, input.status); return Response.json({ ok: true }); }
     return Response.json(await receiveMessage(workspaceId, input));
