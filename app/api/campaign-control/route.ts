@@ -2,7 +2,7 @@ import { and, asc, eq, gte } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db";
 import { jobs, leads, outreach, settings, workspaces } from "@/db/schema";
-import { listRecentGmailInboxThreads, sendGmailMessage } from "@/lib/google";
+import { listRecentStratoInboxMessages, sendStratoMessage } from "@/lib/strato-mail";
 import { defaultSettings, renderEmailHtml, renderTemplate } from "@/lib/templates";
 import { notifyTelegram, sendTelegramMessage, telegramConfigured } from "@/lib/telegram";
 import { apiError, requireWorkspace } from "@/lib/workspace";
@@ -50,14 +50,16 @@ async function maybeDailyReport(workspaceId: string, values: Record<string, stri
   await writeLog(workspaceId, "telegram_daily_report", "completed");
 }
 
-async function detectGmailReplies(workspaceId: string, ownerId: string, values: Record<string, string>) {
+async function detectStratoReplies(workspaceId: string, values: Record<string, string>) {
   if (values.telegram_reply_scan === "false") return;
   const db = getDb();
-  const inbox = await listRecentGmailInboxThreads(ownerId);
+  const inbox = await listRecentStratoInboxMessages(2);
   if (!inbox.length) return;
-  const inboxThreads = new Set(inbox.map((message) => message.threadId));
   const sentRows = await db.select().from(outreach).where(and(eq(outreach.workspaceId, workspaceId), eq(outreach.status, "sent"))).limit(500);
-  for (const row of sentRows.filter((item) => item.step === 1 && item.providerThreadId && inboxThreads.has(item.providerThreadId))) {
+  for (const row of sentRows.filter((item) => item.step === 1 && item.providerMessageId)) {
+    const messageId = row.providerMessageId || "";
+    const replied = inbox.some((message) => [message.inReplyTo, message.references].some((value) => value.includes(messageId)));
+    if (!replied) continue;
     const key = `telegram_reply:${row.leadId}`;
     if (values[key]) continue;
     const [lead] = await db.select().from(leads).where(eq(leads.id, row.leadId)).limit(1);
@@ -65,10 +67,10 @@ async function detectGmailReplies(workspaceId: string, ownerId: string, values: 
     await Promise.all([
       setSetting(workspaceId, key, new Date().toISOString()),
       db.update(leads).set({ pipelineStage: "replied", lastActivityAt: new Date(), updatedAt: new Date() }).where(eq(leads.id, lead.id)),
-      writeLog(workspaceId, "gmail_reply_detected", "completed", lead.email, lead.id),
+      writeLog(workspaceId, "strato_reply_detected", "completed", lead.email, lead.id),
     ]);
     await sendTelegramMessage(`💬 Neue Antwort erhalten\n\nUnternehmen: ${lead.company}\nVon: ${lead.email}\n\nJetzt persönlich reagieren.`, {
-      buttons: [[{ text: "Gmail öffnen ↗", url: "https://mail.google.com/mail/u/0/#inbox" }, { text: "CRM öffnen ↗", url: `${process.env.NEXT_PUBLIC_APP_URL || "https://digitalegewinner-outbound.vercel.app"}/dashboard#leads` }]],
+      buttons: [[{ text: "STRATO Mail öffnen ↗", url: `${process.env.NEXT_PUBLIC_APP_URL || "https://jj-media-social-outbound.vercel.app"}/dashboard/email` }, { text: "CRM öffnen ↗", url: `${process.env.NEXT_PUBLIC_APP_URL || "https://jj-media-social-outbound.vercel.app"}/dashboard#leads` }]],
     });
   }
 }
@@ -124,7 +126,7 @@ export async function PUT(request: Request) {
     const stored = Object.fromEntries(settingRows.map((row) => [row.key, row.value])) as Record<string, string>;
     const values = { ...defaultSettings, ...stored };
     await maybeDailyReport(workspaceId, values).catch(() => undefined);
-    await detectGmailReplies(workspaceId, workspace.ownerId, values).catch(() => undefined);
+    await detectStratoReplies(workspaceId, values).catch(() => undefined);
     if (values.campaign_running !== "true") continue;
     activeCount += 1;
 
@@ -164,7 +166,7 @@ export async function PUT(request: Request) {
         if (existing) await db.update(outreach).set({ subject, body, status: "sending", updatedAt: new Date() }).where(eq(outreach.id, existing.id));
         else { const [created] = await db.insert(outreach).values({ workspaceId, leadId: lead.id, step: 1, subject, body, status: "sending" }).returning(); outreachId = created.id; }
         await writeLog(workspaceId, "campaign_email_send", "running", undefined, lead.id);
-        const message = await sendGmailMessage({ userId: workspace.ownerId, to: lead.email, subject, body, html });
+        const message = await sendStratoMessage({ userId: workspace.ownerId, to: lead.email, subject, body, html });
         await Promise.all([
           db.update(outreach).set({ status: "sent", sentAt: new Date(), providerMessageId: message.id, providerThreadId: message.threadId, updatedAt: new Date() }).where(eq(outreach.id, outreachId!)),
           db.update(leads).set({ pipelineStage: "contacted", lastContactAt: new Date(), lastActivityAt: new Date(), updatedAt: new Date() }).where(eq(leads.id, lead.id)),

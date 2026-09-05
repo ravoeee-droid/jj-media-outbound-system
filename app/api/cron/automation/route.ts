@@ -1,7 +1,7 @@
 import { and, eq, lt, lte } from "drizzle-orm";
 import { getDb } from "@/db";
-import { activities, leads, outreach, settings, tasks, workspaces } from "@/db/schema";
-import { sendGmailMessage } from "@/lib/google";
+import { activities, leads, outreach, settings, tasks } from "@/db/schema";
+import { sendStratoMessage } from "@/lib/strato-mail";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -21,10 +21,9 @@ export async function GET(request: Request) {
     .set({ status: "scheduled", updatedAt: new Date() })
     .where(and(eq(outreach.status, "sending"), lt(outreach.updatedAt, staleBefore)));
   const due = await db
-    .select({ item: outreach, lead: leads, ownerId: workspaces.ownerId })
+    .select({ item: outreach, lead: leads })
     .from(outreach)
     .innerJoin(leads, eq(leads.id, outreach.leadId))
-    .innerJoin(workspaces, eq(workspaces.id, outreach.workspaceId))
     .where(and(eq(outreach.status, "scheduled"), lte(outreach.scheduledAt, new Date())))
     .limit(50);
 
@@ -60,8 +59,7 @@ export async function GET(request: Request) {
         .where(and(eq(outreach.id, row.item.id), eq(outreach.status, "scheduled")))
         .returning({ id: outreach.id });
       if (!claimed) continue;
-      const message = await sendGmailMessage({
-        userId: row.ownerId,
+      const message = await sendStratoMessage({
         to: row.lead.email,
         subject: row.item.subject,
         body: row.item.body,

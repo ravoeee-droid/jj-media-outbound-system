@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db";
 import { activities, leads, outreach, settings, tasks } from "@/db/schema";
-import { sendGmailMessage } from "@/lib/google";
+import { sendStratoMessage } from "@/lib/strato-mail";
 import { defaultSettings, renderEmailHtml, renderTemplate } from "@/lib/templates";
 import { apiError, requireWorkspace } from "@/lib/workspace";
 
@@ -50,7 +50,7 @@ export async function POST(request: Request) {
     const subject = input.subject || renderTemplate(input.step === 1 ? values.email_subject : `Re: ${values.email_subject}`, lead, appBaseUrl);
     const body = input.body || renderTemplate(template, lead, appBaseUrl);
     const html = renderEmailHtml(body, lead, appBaseUrl);
-    const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(lead.email)}&su=${encodeURIComponent(subject)}`;
+    const mailUrl = `mailto:${encodeURIComponent(lead.email)}?subject=${encodeURIComponent(subject)}`;
 
     if (input.action === "prepare") {
       return Response.json({
@@ -61,7 +61,7 @@ export async function POST(request: Request) {
         html,
         previewImageUrl: `${appBaseUrl}/api/preview/${lead.slug}`,
         friendlyVideoUrl: `${appBaseUrl}/video/${lead.slug}`,
-        gmailUrl,
+        mailUrl,
       });
     }
 
@@ -90,8 +90,7 @@ export async function POST(request: Request) {
             .where(and(eq(outreach.leadId, lead.id), eq(outreach.step, input.step - 1)))
             .limit(1)
         : [];
-      const message = await sendGmailMessage({
-        userId: workspace.user.id,
+      const message = await sendStratoMessage({
         to: lead.email,
         subject,
         body,
@@ -137,9 +136,8 @@ export async function POST(request: Request) {
       db.insert(activities).values({
         workspaceId: workspace.workspaceId,
         leadId: lead.id,
-        userId: workspace.user.id,
         type: "email_sent",
-        title: input.action === "send" ? "E-Mail über Gmail gesendet" : "Manueller Gmail-Versand bestätigt",
+        title: input.action === "send" ? "E-Mail über STRATO gesendet" : "Manueller STRATO-Versand bestätigt",
         detail: subject,
       }),
     ]);

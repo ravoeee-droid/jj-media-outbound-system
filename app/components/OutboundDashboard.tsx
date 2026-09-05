@@ -126,7 +126,7 @@ export default function OutboundDashboard({ userName = "JJ-Media" }: { userName?
     screenshotOne: false,
     calendar: false,
     masterVideo: false,
-    gmail: false,
+    mail: false,
     database: false,
     blob: false,
   });
@@ -161,16 +161,6 @@ export default function OutboundDashboard({ userName = "JJ-Media" }: { userName?
     return () => { active = false; };
   }, []);
 
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const gmail = params.get("gmail");
-    if (!gmail) return;
-    setActiveSection("Integrationen");
-    if (gmail === "connected") showToast("Gmail wurde erfolgreich verbunden.");
-    else if (gmail === "denied") showToast("Google-Verbindung wurde abgebrochen.");
-    else showToast(params.get("detail") || "Gmail konnte nicht verbunden werden.");
-    window.history.replaceState(null, "", "/dashboard#integrationen");
-  }, []);
 
   const metrics = useMemo(() => {
     const ready = leads.filter((lead) => lead.videoStatus === "ready").length;
@@ -416,15 +406,15 @@ export default function OutboundDashboard({ userName = "JJ-Media" }: { userName?
     }
   }
 
-  async function openManualGmail() {
+  async function openManualSTRATO Mail() {
     if (!emailDraft) return;
     const copiedRich = await copyRichEmail();
     const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(emailDraft.lead.email)}&su=${encodeURIComponent(emailDraft.subject)}`;
     window.open(gmailUrl, "_blank", "noopener,noreferrer");
     setManualComposerOpened(true);
     showToast(copiedRich
-      ? "Gmail ist offen. Füge die Rich-Mail mit Strg+V ein und sende sie."
-      : "Gmail ist offen. Füge den kopierten Text ein und sende ihn.");
+      ? "STRATO Mail ist offen. Füge die Rich-Mail mit Strg+V ein und sende sie."
+      : "STRATO Mail ist offen. Füge den kopierten Text ein und sende ihn.");
   }
 
   async function confirmManualSent() {
@@ -472,7 +462,7 @@ export default function OutboundDashboard({ userName = "JJ-Media" }: { userName?
       setEmailDraft(null);
       const taskPayload = await fetch("/api/tasks").then((taskResponse) => taskResponse.json()) as { tasks?: typeof tasks };
       if (taskPayload.tasks) setTasks(taskPayload.tasks);
-      showToast(payload.alreadySent ? "Diese Mail war bereits versendet; es wurde nichts doppelt gesendet." : "Rich-Mail mit GIF wurde über Gmail versendet.");
+      showToast(payload.alreadySent ? "Diese Mail war bereits versendet; es wurde nichts doppelt gesendet." : "Rich-Mail mit GIF wurde über STRATO Mail versendet.");
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Versand fehlgeschlagen.");
     } finally {
@@ -611,8 +601,8 @@ export default function OutboundDashboard({ userName = "JJ-Media" }: { userName?
 
   async function toggleAutoFollowups() {
     const next = !autoFollowups;
-    if (next && !integrations.gmail) {
-      showToast("Verbinde zuerst Gmail, bevor automatische Follow-ups aktiviert werden.");
+    if (next && !integrations.mail) {
+      showToast("Verbinde zuerst STRATO Mail, bevor automatische Follow-ups aktiviert werden.");
       return;
     }
     if (next) {
@@ -635,21 +625,7 @@ export default function OutboundDashboard({ userName = "JJ-Media" }: { userName?
     showToast(next ? "Automatische Follow-ups sind aktiv." : "Automatische Follow-ups sind ausgeschaltet.");
   }
 
-  async function disconnectGmail() {
-    await fetch("/api/settings", {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ auto_followups: "false" }),
-    });
-    const response = await fetch("/api/gmail/disconnect", { method: "DELETE" });
-    if (!response.ok) {
-      showToast("Gmail konnte nicht getrennt werden.");
-      return;
-    }
-    setAutoFollowups(false);
-    setIntegrations((current) => ({ ...current, gmail: false }));
-    showToast("Gmail wurde getrennt; automatische Follow-ups sind aus.");
-  }
+  function openStratoMail() { window.location.assign("/dashboard/email"); }
 
   async function logout() {
     await fetch("/api/cockpit/logout", { method: "POST" });
@@ -714,7 +690,7 @@ export default function OutboundDashboard({ userName = "JJ-Media" }: { userName?
             <div className="section-heading">
               <div><p className="eyebrow eyebrow--dark">Aktive Kampagne</p><h2>Social Media · Neukundengewinnung</h2></div>
               <div className="section-heading__actions">
-                <span className="campaign-status"><span /> {integrations.gmail && autoFollowups ? "Automatisch aktiv" : "Manueller Modus"}</span>
+                <span className="campaign-status"><span /> {integrations.mail && autoFollowups ? "Automatisch aktiv" : "Manueller Modus"}</span>
                 <button className="text-button" onClick={() => setActiveSection("Kampagnen")}>Kampagne öffnen →</button>
               </div>
             </div>
@@ -780,7 +756,7 @@ export default function OutboundDashboard({ userName = "JJ-Media" }: { userName?
                           <td><span className="muted">{lead.email || "Fehlt noch"}</span></td>
                           <td><span className={statusClass(lead.status)}><i />{lead.status}</span></td>
                           <td><strong className="watchtime">{lead.watch}</strong></td>
-                          <td><div className="table-action-group"><button onClick={() => setSelectedLeadId(lead.id)}>CRM</button><Link href={`/dashboard/whatsapp?lead=${lead.id}`}>WhatsApp</Link><button onClick={() => generateLeadVideo(lead)} disabled={lead.videoStatus === "processing"}>{lead.videoStatus === "processing" ? "Erstellt …" : lead.videoStatus === "ready" ? "Video neu" : "Video erstellen"}</button><label className="table-upload-action">{uploadingProfileId === lead.id ? "Upload …" : "IG-Screenshot"}<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => void uploadProfileScreenshot(lead, event)} disabled={Boolean(uploadingProfileId)} /></label><button onClick={() => prepareEmail(lead)}>Gmail</button><a href={`/v/${lead.slug}`} target="_blank" rel="noreferrer">LP öffnen</a></div></td>
+                          <td><div className="table-action-group"><button onClick={() => setSelectedLeadId(lead.id)}>CRM</button><Link href={`/dashboard/whatsapp?lead=${lead.id}`}>WhatsApp</Link><button onClick={() => generateLeadVideo(lead)} disabled={lead.videoStatus === "processing"}>{lead.videoStatus === "processing" ? "Erstellt …" : lead.videoStatus === "ready" ? "Video neu" : "Video erstellen"}</button><label className="table-upload-action">{uploadingProfileId === lead.id ? "Upload …" : "IG-Screenshot"}<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => void uploadProfileScreenshot(lead, event)} disabled={Boolean(uploadingProfileId)} /></label><button onClick={() => prepareEmail(lead)}>STRATO Mail</button><a href={`/v/${lead.slug}`} target="_blank" rel="noreferrer">LP öffnen</a></div></td>
                         </tr>
                       ))}
                     </tbody>
@@ -799,7 +775,7 @@ export default function OutboundDashboard({ userName = "JJ-Media" }: { userName?
 
           {activeSection === "Kampagnen" && (
             <section className="workspace-page">
-              <div className="workspace-heading"><div><p className="eyebrow eyebrow--dark">Aktive Sequenz</p><h2>Social Media · Neukundengewinnung</h2><p>Ein klarer Drei-Kontakt-Prozess statt wahlloser Massenmails.</p></div><span className="campaign-status"><span /> {integrations.gmail && autoFollowups ? "Automatisch aktiv" : "Manueller Modus"}</span></div>
+              <div className="workspace-heading"><div><p className="eyebrow eyebrow--dark">Aktive Sequenz</p><h2>Social Media · Neukundengewinnung</h2><p>Ein klarer Drei-Kontakt-Prozess statt wahlloser Massenmails.</p></div><span className="campaign-status"><span /> {integrations.mail && autoFollowups ? "Automatisch aktiv" : "Manueller Modus"}</span></div>
               <div className="campaign-layout">
                 <div className="sequence sequence--page">
                   <article><span>Tag 0</span><div><strong>Persönliche Social-Media-Analyse</strong><small>Individuelle Seite mit Instagram-Profil, JJ-Media Video und Kalender.</small></div><b>Aktiv</b></article>
@@ -864,13 +840,13 @@ export default function OutboundDashboard({ userName = "JJ-Media" }: { userName?
                   <form className="calendar-form" onSubmit={saveCalendar}><input type="url" value={calendarUrl} onChange={(event) => setCalendarUrl(event.target.value)} placeholder="https://cal.com/jj-media/15min" /><button className="button button--primary" type="submit">Speichern</button></form>
                 </article>
                 <article className="integration-item integration-item--page">
-                  <div className="integration-item__head"><span className="integration-logo integration-logo--gmail">M</span><div><strong>Gmail</strong><small>OAuth-Verbindung für echten API-Versand</small></div><span className={`integration-state ${integrations.gmail ? "integration-state--ready" : ""}`}>{integrations.gmail ? "Verbunden" : "Nicht verbunden"}</span></div>
-                  <p>{integrations.gmail ? "Rich-Mails werden erst nach deiner bewussten Bestätigung versendet. Folgekontakte können optional automatisiert werden." : "Verbinde genau das Google-Konto, von dem deine Outbound-Mails versendet werden sollen."}</p>
+                  <div className="integration-item__head"><span className="integration-logo integration-logo--gmail">M</span><div><strong>STRATO Mail</strong><small>IMAP/SMTP-Verbindung für direkten Versand</small></div><span className={`integration-state ${integrations.mail ? "integration-state--ready" : ""}`}>{integrations.mail ? "Verbunden" : "Nicht verbunden"}</span></div>
+                  <p>{integrations.mail ? "E-Mails werden direkt über dein STRATO-Postfach versendet. Folgekontakte können optional automatisiert werden." : "Hinterlege STRATO_MAIL_EMAIL und STRATO_MAIL_PASSWORD einmal sicher in Vercel. Danach ist das Postfach direkt im Growth OS verfügbar."}</p>
                   <div className="email-preview__actions">
-                    {integrations.gmail
-                      ? <button className="button button--ghost" onClick={() => void disconnectGmail()}>Gmail trennen</button>
-                      : <a className="button button--primary" href="/api/gmail/connect">Gmail sicher verbinden</a>}
-                    <button className={`button ${autoFollowups ? "button--primary" : "button--soft"}`} onClick={() => void toggleAutoFollowups()} disabled={!integrations.gmail}>
+                    {integrations.mail
+                      ? <button className="button button--ghost" onClick={() => void openStratoMail()}>Postfach öffnen</button>
+                      : <a className="button button--primary" href="/dashboard/email">STRATO Mail einrichten</a>}
+                    <button className={`button ${autoFollowups ? "button--primary" : "button--soft"}`} onClick={() => void toggleAutoFollowups()} disabled={!integrations.mail}>
                       {autoFollowups ? "✓ Auto-Follow-ups aktiv" : "Auto-Follow-ups einschalten"}
                     </button>
                   </div>
@@ -1006,7 +982,7 @@ export default function OutboundDashboard({ userName = "JJ-Media" }: { userName?
         <div className="modal-backdrop modal-backdrop--center" role="presentation" onMouseDown={() => setEmailDraft(null)}>
           <section className="email-preview" role="dialog" aria-modal="true" aria-labelledby="email-preview-title" onMouseDown={(event) => event.stopPropagation()}>
             <button className="modal-close" onClick={() => setEmailDraft(null)} aria-label="Schließen">×</button>
-            <p className="eyebrow eyebrow--orange">Gmail-Entwurf</p>
+            <p className="eyebrow eyebrow--orange">STRATO Mail-Entwurf</p>
             <h2 id="email-preview-title">Persönliche Nachricht an {emailDraft.lead.company}</h2>
             <div className="email-field"><small>An</small><strong>{emailDraft.lead.email}</strong></div>
             <div className="email-field"><small>Betreff</small><strong>{emailDraft.subject}</strong></div>
@@ -1018,11 +994,11 @@ export default function OutboundDashboard({ userName = "JJ-Media" }: { userName?
             </a>
             <div className="email-preview__actions">
               <button className="button button--ghost" onClick={() => void copyRichEmail().then(() => showToast("Rich-Mail inklusive GIF kopiert."))}>Rich-Mail kopieren</button>
-              {integrations.gmail && <button className="button button--primary" onClick={() => void sendDirect()} disabled={sendingEmail}>{sendingEmail ? "Wird gesendet …" : "Jetzt über Gmail senden →"}</button>}
-              {!integrations.gmail && !manualComposerOpened && <button className="button button--primary" onClick={() => void openManualGmail()}>Kopieren & Gmail öffnen →</button>}
-              {!integrations.gmail && manualComposerOpened && <button className="button button--primary" onClick={() => void confirmManualSent()} disabled={sendingEmail}>{sendingEmail ? "Wird gespeichert …" : "Ich habe die Mail gesendet ✓"}</button>}
+              {integrations.mail && <button className="button button--primary" onClick={() => void sendDirect()} disabled={sendingEmail}>{sendingEmail ? "Wird gesendet …" : "Jetzt über STRATO Mail senden →"}</button>}
+              {!integrations.mail && !manualComposerOpened && <button className="button button--primary" onClick={() => void openManualSTRATO Mail()}>Kopieren & STRATO Mail öffnen →</button>}
+              {!integrations.mail && manualComposerOpened && <button className="button button--primary" onClick={() => void confirmManualSent()} disabled={sendingEmail}>{sendingEmail ? "Wird gespeichert …" : "Ich habe die Mail gesendet ✓"}</button>}
             </div>
-            <p className="security-note">{integrations.gmail ? "Der API-Versand erfolgt genau einmal. Erst danach werden CRM-Status und Follow-ups gesetzt." : manualComposerOpened ? "Bestätige den Versand erst, nachdem du in Gmail wirklich auf Senden geklickt hast." : "Gmail öffnet sich leer. Drücke dort Strg+V; GIF-Vorschau, Play-Button und Link werden gemeinsam eingefügt."}</p>
+            <p className="security-note">{integrations.mail ? "Der API-Versand erfolgt genau einmal. Erst danach werden CRM-Status und Follow-ups gesetzt." : manualComposerOpened ? "Bestätige den Versand erst, nachdem du in STRATO Mail wirklich auf Senden geklickt hast." : "STRATO Mail öffnet sich leer. Drücke dort Strg+V; GIF-Vorschau, Play-Button und Link werden gemeinsam eingefügt."}</p>
           </section>
         </div>
       )}
@@ -1057,8 +1033,8 @@ export default function OutboundDashboard({ userName = "JJ-Media" }: { userName?
             <p className="panel-intro">Ein fokussierter Drei-Kontakt-Prozess: persönliches Video, wertorientiertes Follow-up und sauberer Abschluss.</p>
             <div className="sequence">
               <article><span>Tag 0</span><div><strong>Persönliche Social-Media-Analyse</strong><small>Kurze Nachricht mit individueller Social-Audit-Seite</small></div><b>Aktiv</b></article>
-              <article><span>Tag 2</span><div><strong>Relevanz-Follow-up</strong><small>Kurze Nachfrage ohne erneuten Pitch</small></div><b>{autoFollowups && integrations.gmail ? "Automatisch" : "Nach Versand geplant"}</b></article>
-              <article><span>Tag 5</span><div><strong>Permission Close</strong><small>„Später“ oder „nicht relevant“ als einfache Antwort</small></div><b>{autoFollowups && integrations.gmail ? "Automatisch" : "Nach Versand geplant"}</b></article>
+              <article><span>Tag 2</span><div><strong>Relevanz-Follow-up</strong><small>Kurze Nachfrage ohne erneuten Pitch</small></div><b>{autoFollowups && integrations.mail ? "Automatisch" : "Nach Versand geplant"}</b></article>
+              <article><span>Tag 5</span><div><strong>Permission Close</strong><small>„Später“ oder „nicht relevant“ als einfache Antwort</small></div><b>{autoFollowups && integrations.mail ? "Automatisch" : "Nach Versand geplant"}</b></article>
             </div>
             <div className="campaign-goal"><small>Live-Status</small><strong>{leads.length} Leads · {leads.filter((lead) => lead.videoStatus === "ready").length} fertige Videos · {tasks.filter((task) => task.status === "open").length} offene Follow-ups</strong></div>
           </section>
