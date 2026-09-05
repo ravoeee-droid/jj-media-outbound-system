@@ -7,12 +7,27 @@ import { googleOAuthAppBase } from "@/lib/google-oauth-url";
 
 const STATE_COOKIE = "dg_gmail_oauth_state";
 
+function destinationFromRequest(request: Request) {
+  const value = request.headers.get("cookie")
+    ?.split(";")
+    .map((entry) => entry.trim().split("="))
+    .find(([key]) => key === "jj_google_destination")?.[1];
+  if (value === "email") return "email";
+  if (value === "whatsapp") return "whatsapp";
+  return "outbound";
+}
+
 function finish(request: Request, status: "connected" | "denied" | "error", detail?: string) {
-  const calendar = request.headers.get("cookie")?.split(";").some((entry) => entry.trim() === "jj_google_destination=whatsapp");
-  const url = new URL(`${googleOAuthAppBase(request.url)}/dashboard/${calendar ? "whatsapp?tab=connection" : "outbound"}`);
+  const destination = destinationFromRequest(request);
+  const target = destination === "email"
+    ? "/dashboard/email"
+    : destination === "whatsapp"
+      ? "/dashboard/whatsapp?tab=connection"
+      : "/dashboard/outbound";
+  const url = new URL(`${googleOAuthAppBase(request.url)}${target}`);
   url.searchParams.set("gmail", status);
   if (detail) url.searchParams.set("detail", detail.slice(0, 180));
-  if (!calendar) url.hash = "integrationen";
+  if (destination === "outbound") url.hash = "integrationen";
   const response = NextResponse.redirect(url);
   response.cookies.set(STATE_COOKIE, "", {
     httpOnly: true,
@@ -93,7 +108,7 @@ export async function GET(request: Request) {
       refresh_token: refreshToken,
       expires_at: Math.floor(Date.now() / 1000) + (tokens.expires_in || 3600),
       token_type: tokens.token_type || "Bearer",
-      scope: tokens.scope || "",
+      scope: tokens.scope || existing?.scope || "",
       id_token: tokens.id_token,
     });
     return finish(request, "connected", googleUser.email);
