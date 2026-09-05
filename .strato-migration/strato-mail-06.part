@@ -1,0 +1,100 @@
+}
+
+function buildRawMessage(args: { to: string; cc?: string; bcc?: string; subject: string; body: string; html?: string; inReplyTo?: string; references?: string }) {
+  const c = config();
+  const to = safeHeader(args.to);
+  const cc = safeHeader(args.cc || "");
+  const subject = safeHeader(args.subject);
+  if (!addresses(to).length) throw new Error("Bitte eine gültige Empfängeradresse angeben.");
+  if (!subject) throw new Error("Bitte einen Betreff eingeben.");
+  const domain = c.email.split("@")[1] || "jj-media.local";
+  const messageId = `<${randomUUID()}@${domain}>`;
+  const boundary = `jj_${randomUUID().replace(/-/g, "")}`;
+  const inReplyTo = normalizeReference(args.inReplyTo || "");
+  const references = [args.references || "", inReplyTo].filter(Boolean).join(" ").trim();
+  const html = args.html || `<div style="font-family:Arial,sans-serif;white-space:pre-wrap">${escapeHtml(args.body).replace(/\n/g, "<br>")}</div>`;
+  const headers = [
+    `From: ${encodedHeader(c.senderName)} <${c.email}>`,
+    `To: ${to}`,
+    ...(cc ? [`Cc: ${cc}`] : []),
+    `Subject: ${encodedHeader(subject)}`,
+    `Date: ${new Date().toUTCString()}`,
+    `Message-ID: ${messageId}`,
+    ...(inReplyTo ? [`In-Reply-To: ${inReplyTo}`] : []),
+    ...(references ? [`References: ${references}`] : []),
+    "MIME-Version: 1.0",
+    `Content-Type: multipart/alternative; boundary="${boundary}"`,
+    "",
+    `--${boundary}`,
+    'Content-Type: text/plain; charset="UTF-8"',
+    "Content-Transfer-Encoding: 8bit",
+    "",
+    args.body,
+    `--${boundary}`,
+    'Content-Type: text/html; charset="UTF-8"',
+    "Content-Transfer-Encoding: 8bit",
+    "",
+    html,
+    `--${boundary}--`,
+    "",
+  ];
+  return { raw: Buffer.from(headers.join("\r\n"), "utf8"), messageId };
+}
+
+class SmtpClient extends BufferedTls {
+  static async open() {
+    const c = config();
+    const socket = await tlsSocket(c.smtpHost, c.smtpPort, "STRATO SMTP");
+    const client = new SmtpClient(socket);
+    const greeting = await client.readReply();
+    if (greeting.code !== 220) throw new Error(`STRATO SMTP: ${greeting.text.slice(0, 180)}`);
+    await client.expect("EHLO jj-media.local", 250);
+    await client.expect("AUTH LOGIN", 334);
+    await client.expect(Buffer.from(c.email).toString("base64"), 334);
+    await client.expect(Buffer.from(c.password).toString("base64"), 235);
+    return client;
+  }
+
+  private async readReply() {
+    const lines: string[] = [];
+    let code = 0;
+    for (;;) {
+      const line = await this.readLine();
+      lines.push(line);
+      const match = line.match(/^(\d{3})([ -])(.*)$/);
+      if (!match) continue;
+      code = Number(match[1]);
+      if (match[2] === " ") return { code, text: lines.join("\n") };
+    }
+  }
+
+  async expect(command: string, expected: number | number[]) {
+    this.socket.write(`${command}\r\n`);
+    const reply = await this.readReply();
+    const allowed = Array.isArray(expected) ? expected : [expected];
+    if (!allowed.includes(reply.code)) throw new Error(`STRATO SMTP ${reply.code}: ${reply.text.slice(0, 260)}`);
+    return reply;
+  }
+
+  async send(raw: Buffer, recipients: string[]) {
+    const c = config();
+    await this.expect(`MAIL FROM:<${c.email}>`, 250);
+    for (const recipient of recipients) await this.expect(`RCPT TO:<${recipient}>`, [250, 251]);
+    await this.expect("DATA", 354);
+    const text = raw.toString("utf8").replace(/(^|\r\n)\./g, "$1..");
+    this.socket.write(text.endsWith("\r\n") ? text : `${text}\r\n`);
+    this.socket.write(".\r\n");
+    const reply = await this.readReply();
+    if (reply.code !== 250) throw new Error(`STRATO SMTP ${reply.code}: ${reply.text.slice(0, 260)}`);
+  }
+
+  async quit() {
+    try { await this.expect("QUIT", 221); } catch { /* message may already be accepted */ }
+    this.socket.end();
+  }
+}
+
+async function appendCopy(raw: Buffer, kind: "sent" | "draft") {
+  const client = await ImapClient.open();
+  try {
+    const folders = await getFolders(client);
