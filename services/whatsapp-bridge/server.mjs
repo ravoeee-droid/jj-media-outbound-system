@@ -1,10 +1,11 @@
-import makeWASocket, { DisconnectReason, useMultiFileAuthState } from "@whiskeysockets/baileys";
+import makeWASocket, { Browsers, DisconnectReason, useMultiFileAuthState } from "@whiskeysockets/baileys";
 import { existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import pino from "pino";
 import QRCode from "qrcode";
 import qrcodeTerminal from "qrcode-terminal";
+import { installHistorySync } from "./history-sync.mjs";
 
 const root = dirname(fileURLToPath(import.meta.url));
 const dataDir = join(root, "data");
@@ -106,6 +107,7 @@ let pumpBusy = false;
 let aiPumpBusy = false;
 let aiReady = false;
 let aiLastError = "";
+let historySync = null;
 const inFlight = new Map();
 const logger = pino({ level: "silent" });
 
@@ -127,7 +129,7 @@ async function checkOllama() {
 }
 
 async function statusHeartbeat() {
-  try { await api({ action: "status", workerId: config.workerId, connected, phone, qr: connected ? "" : qrData, version: "baileys-6.7.24+ollama-1", aiReady, aiModel: ollamaModel }, 20_000); }
+  try { await api({ action: "status", workerId: config.workerId, connected, phone, qr: connected ? "" : qrData, version: "baileys-6.7.24+ollama-2-history", aiReady, aiModel: ollamaModel }, 20_000); }
   catch (error) { console.warn(`Status: ${error.message}`); }
 }
 
@@ -240,14 +242,17 @@ async function handleMessage(entry) {
   if (key.fromMe && [...inFlight.values()].some((row) => row.to === phoneNumber && row.body === content.body)) return;
   if (key.fromMe && Object.values(ledger).some((row) => row?.providerId === key.id)) return;
   try {
-    await api({ action: "event", workerId: config.workerId, id: key.id, phone: phoneNumber, body: content.body, kind: content.kind, timestamp: new Date(Number(entry.messageTimestamp || Date.now() / 1000) * 1000).toISOString(), fromMe: key.fromMe === true }, 115_000);
+    const result = await api({ action: "event", workerId: config.workerId, id: key.id, phone: phoneNumber, body: content.body, kind: content.kind, timestamp: new Date(Number(entry.messageTimestamp || Date.now() / 1000) * 1000).toISOString(), fromMe: key.fromMe === true }, 115_000);
+    if (result?.ignored) await historySync?.ingest(entry);
   } catch (error) { console.warn(`Chat-Sync: ${error.message}`); }
 }
 
 async function connect() {
   if (stopping) return;
   const { state, saveCreds } = await useMultiFileAuthState(authDir);
-  sock = makeWASocket({ auth: state, logger, markOnlineOnConnect: false, syncFullHistory: false, browser: ["JJ Media Outbound", "Chrome", "1.0.0"], generateHighQualityLinkPreview: false });
+  sock = makeWASocket({ auth: state, logger, markOnlineOnConnect: false, syncFullHistory: true, browser: Browsers.windows("Desktop"), generateHighQualityLinkPreview: false });
+  historySync?.stop();
+  historySync = installHistorySync({ sock, config, messageContent, phoneFromKey });
   sock.ev.on("creds.update", saveCreds);
   sock.ev.on("messages.upsert", ({ messages, type }) => {
     if (type !== "notify") return;
@@ -275,7 +280,9 @@ async function connect() {
       qrData = "";
       console.log(`✓ WhatsApp verbunden${phone ? ` (+${phone})` : ""}. Outbound Tool ist bereit.`);
       console.log(aiReady ? `✓ Lokale KI bereit (${ollamaModel}).` : `! Lokale KI noch nicht bereit: ${aiLastError || "Ollama wird geprüft"}`);
+      console.log("✓ Lead-Radar aktiv: verfügbare 1:1-Chat-Historie wird synchronisiert und lokal analysiert.");
       await statusHeartbeat();
+      void historySync?.sweep();
       void api({ action: "tick", workerId: config.workerId }).catch(() => undefined);
     }
     if (connection === "close") {
@@ -303,6 +310,7 @@ async function shutdown() {
   if (stopping) return;
   stopping = true;
   clearInterval(statusTimer); clearInterval(pumpTimer); clearInterval(aiTimer); clearInterval(ollamaTimer); clearInterval(tickTimer);
+  historySync?.stop();
   connected = false; qrData = "";
   try { await statusHeartbeat(); } catch { /* best effort */ }
   try { unlinkSync(pidPath); } catch { /* best effort */ }
@@ -312,6 +320,6 @@ process.once("SIGINT", shutdown);
 process.once("SIGTERM", shutdown);
 process.once("exit", () => { try { unlinkSync(pidPath); } catch { /* best effort */ } });
 
-console.log("JJ-Media WhatsApp startet – Baileys + lokale Ollama-KI, kein Dify, kein KI-API-Abo.");
+console.log("JJ-Media WhatsApp startet – Baileys + lokale Ollama-KI + Lead-Radar, kein Dify, kein KI-API-Abo.");
 void checkOllama().then(() => statusHeartbeat());
 connect().catch((error) => { console.error(error); shutdown(); });
