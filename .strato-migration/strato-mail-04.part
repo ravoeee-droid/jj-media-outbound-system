@@ -1,0 +1,100 @@
+    const match = line.match(/^\* LIST \(([^)]*)\) (?:(?:"[^"]*")|NIL) (?:(?:"((?:[^"\\]|\\.)*)")|(.+))$/i);
+    if (!match) continue;
+    const rawName = (match[2] || match[3] || "").replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+    folders.push({ name: rawName, flags: match[1].split(/\s+/).filter(Boolean) });
+  }
+  return folders;
+}
+
+function folderByFlag(folders: FolderInfo[], flag: string) {
+  return folders.find((folder) => folder.flags.some((value) => value.toLowerCase() === flag.toLowerCase()))?.name || "";
+}
+
+function folderByName(folders: FolderInfo[], names: string[]) {
+  const normalized = names.map((name) => name.toLowerCase());
+  return folders.find((folder) => normalized.some((name) => folder.name.toLowerCase().includes(name)))?.name || "";
+}
+
+function foldersFromList(folders: FolderInfo[]): FolderMap {
+  return {
+    inbox: "INBOX",
+    sent: folderByFlag(folders, "\\Sent") || folderByName(folders, ["sent", "gesendet"]),
+    drafts: folderByFlag(folders, "\\Drafts") || folderByName(folders, ["draft", "entwurf"]),
+    trash: folderByFlag(folders, "\\Trash") || folderByName(folders, ["trash", "papierkorb", "gelöscht", "deleted"]),
+    junk: folderByFlag(folders, "\\Junk") || folderByName(folders, ["junk", "spam"]),
+    archive: folderByFlag(folders, "\\Archive") || folderByName(folders, ["archive", "archiv"]),
+    all: folderByFlag(folders, "\\All") || folderByName(folders, ["all mail", "alle nachrichten", "all"]),
+  };
+}
+
+async function getFolders(client: ImapClient) {
+  return foldersFromList(parseListFolders(await client.execute('LIST "" "*"')));
+}
+
+function folderForView(view: MailView, folders: FolderMap) {
+  if (view === "sent") return folders.sent || folders.inbox;
+  if (view === "drafts") return folders.drafts || folders.inbox;
+  if (view === "trash") return folders.trash || folders.inbox;
+  if (view === "all") return folders.all || folders.inbox;
+  return folders.inbox;
+}
+
+function encodeMailId(folder: string, uid: number) {
+  return Buffer.from(JSON.stringify({ f: folder, u: uid }), "utf8").toString("base64url");
+}
+
+function decodeMailId(id: string) {
+  try {
+    const value = JSON.parse(Buffer.from(id, "base64url").toString("utf8")) as { f?: unknown; u?: unknown };
+    if (typeof value.f !== "string" || !Number.isInteger(value.u) || Number(value.u) <= 0) throw new Error();
+    return { folder: value.f, uid: Number(value.u) };
+  } catch {
+    throw new Error("Ungültige STRATO-Mail-ID.");
+  }
+}
+
+function imapSearchText(value: string) {
+  return imapQuote(value.replace(/[\r\n]/g, " ").slice(0, 300));
+}
+
+function searchCriteria(view: MailView, query: string) {
+  const terms: string[] = [];
+  if (view === "unread") terms.push("UNSEEN");
+  if (view === "starred") terms.push("FLAGGED");
+  const remaining = query.trim().replace(/\b(from|to|subject):(?:"([^"]+)"|(\S+))/gi, (_all, field: string, quoted: string, bare: string) => {
+    const value = quoted || bare || "";
+    const map: Record<string, string> = { from: "FROM", to: "TO", subject: "SUBJECT" };
+    terms.push(`${map[field.toLowerCase()]} ${imapSearchText(value)}`);
+    return " ";
+  }).trim();
+  if (remaining) terms.push(`TEXT ${imapSearchText(remaining)}`);
+  return terms.length ? terms.join(" ") : "ALL";
+}
+
+async function fetchHeader(client: ImapClient, folder: string, uid: number, view: MailView): Promise<MailThreadView> {
+  const response = await client.execute(`UID FETCH ${uid} (FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT DATE MESSAGE-ID REFERENCES IN-REPLY-TO)])`);
+  const literal = extractLiterals(response)[0] || Buffer.alloc(0);
+  const headers = parseHeaders(literal);
+  const flags = parseFlags(response);
+  const id = encodeMailId(folder, uid);
+  const labels = flags.map((flag) => flag.replace(/^\\/, ""));
+  const from = view === "sent" ? (headers.to || headers.from || "") : (headers.from || "");
+  return {
+    id,
+    from,
+    to: headers.to || "",
+    subject: headers.subject || "(ohne Betreff)",
+    date: headers.date || "",
+    internalDate: parseInternalDate(response),
+    snippet: "",
+    unread: !flags.some((flag) => flag.toLowerCase() === "\\seen"),
+    starred: flags.some((flag) => flag.toLowerCase() === "\\flagged"),
+    draft: flags.some((flag) => flag.toLowerCase() === "\\draft") || view === "drafts",
+    sent: view === "sent",
+    messageCount: 1,
+    labels,
+  };
+}
+
+export async function listStratoMailThreads(options: { view?: MailView; q?: string; maxResults?: number } = {}) {
+  const c = config();
