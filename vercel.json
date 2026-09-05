@@ -5,7 +5,8 @@
   "git": {
     "deploymentEnabled": {
       "work/ollama-email-import-20260905": false,
-      "work/strato-mail-20260905": false
+      "work/strato-mail-20260905": false,
+      "work/build-fix-20260905": false
     }
   },
   "redirects": [

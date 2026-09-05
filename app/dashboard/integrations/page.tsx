@@ -6,6 +6,8 @@ import { stratoMailStatus } from "@/lib/strato-mail";
 import { getBridgeStatus } from "@/lib/whatsapp/worker-status";
 import { calendarConnected } from "@/lib/whatsapp/calendar";
 
+export const dynamic = "force-dynamic";
+
 export default async function IntegrationsPage() {
   const workspace = await requireWorkspace();
   const [bridge, googleCalendar] = await Promise.all([
