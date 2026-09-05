@@ -1,0 +1,100 @@
+import { randomUUID } from "node:crypto";
+import tls, { type TLSSocket } from "node:tls";
+
+export type MailView = "inbox" | "unread" | "starred" | "sent" | "drafts" | "all" | "trash";
+export type MailThreadAction = "archive" | "read" | "unread" | "star" | "unstar" | "trash" | "untrash" | "spam" | "inbox";
+
+export type MailMessageView = {
+  id: string;
+  threadId: string;
+  labels: string[];
+  from: string;
+  to: string;
+  cc: string;
+  subject: string;
+  date: string;
+  messageId: string;
+  references: string;
+  body: string;
+  snippet: string;
+  internalDate: string;
+};
+
+export type MailThreadView = {
+  id: string;
+  from: string;
+  to: string;
+  subject: string;
+  date: string;
+  internalDate: string;
+  snippet: string;
+  unread: boolean;
+  starred: boolean;
+  draft: boolean;
+  sent: boolean;
+  messageCount: number;
+  labels: string[];
+};
+
+type StratoConfig = {
+  email: string;
+  password: string;
+  senderName: string;
+  imapHost: string;
+  imapPort: number;
+  smtpHost: string;
+  smtpPort: number;
+};
+
+type FolderInfo = { name: string; flags: string[] };
+type FolderMap = { inbox: string; sent: string; drafts: string; trash: string; junk: string; archive: string; all: string };
+type ParsedHeaders = Record<string, string>;
+
+type ImapResult = { status: "OK" | "NO" | "BAD"; response: Buffer; line: string };
+
+function envText(name: string) {
+  return (process.env[name] || "").trim();
+}
+
+export function stratoMailStatus() {
+  const email = envText("STRATO_MAIL_EMAIL");
+  const password = envText("STRATO_MAIL_PASSWORD");
+  return {
+    configured: Boolean(email && password),
+    email,
+    imapHost: envText("STRATO_IMAP_HOST") || "imap.strato.de",
+    imapPort: Number(envText("STRATO_IMAP_PORT") || 993),
+    smtpHost: envText("STRATO_SMTP_HOST") || "smtp.strato.de",
+    smtpPort: Number(envText("STRATO_SMTP_PORT") || 465),
+  };
+}
+
+function config(): StratoConfig {
+  const status = stratoMailStatus();
+  if (!status.configured) throw new Error("STRATO Mail ist noch nicht eingerichtet. STRATO_MAIL_EMAIL und STRATO_MAIL_PASSWORD fehlen.");
+  return {
+    email: status.email,
+    password: process.env.STRATO_MAIL_PASSWORD || "",
+    senderName: envText("STRATO_MAIL_NAME") || envText("EMAIL_SENDER_NAME") || "JJ-Media",
+    imapHost: status.imapHost,
+    imapPort: status.imapPort,
+    smtpHost: status.smtpHost,
+    smtpPort: status.smtpPort,
+  };
+}
+
+function timeoutError(label: string) {
+  return new Error(`${label} hat zu lange gebraucht.`);
+}
+
+function tlsSocket(host: string, port: number, label: string) {
+  return new Promise<TLSSocket>((resolve, reject) => {
+    const socket = tls.connect({ host, port, servername: host, rejectUnauthorized: true });
+    const timer = setTimeout(() => {
+      socket.destroy();
+      reject(timeoutError(label));
+    }, 15_000);
+    socket.once("secureConnect", () => {
+      clearTimeout(timer);
+      resolve(socket);
+    });
