@@ -1,5 +1,5 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
-import { Pool } from "postgres";
+import { Client } from "postgres";
 
 const ISSUER = "https://oidc.vercel.com/raphaelo-s-projects";
 const AUDIENCE = "https://vercel.com/raphaelo-s-projects";
@@ -9,7 +9,6 @@ const EXPECTED_PROJECT_ID = "prj_CSWP0Ht9bw1MdZVZD0s7xawe19H0";
 const JWKS = createRemoteJWKSet(new URL(`${ISSUER}/.well-known/jwks`));
 const dbUrl = Deno.env.get("SUPABASE_DB_URL");
 if (!dbUrl) throw new Error("SUPABASE_DB_URL is unavailable");
-const pool = new Pool(dbUrl, 3, true);
 
 const allowedTables = new Set([
   "accounts", "activities", "assets", "authenticators", "bookings", "campaigns",
@@ -71,16 +70,17 @@ Deno.serve(async (req) => {
     const body = await req.json() as { sql?: unknown; params?: unknown; method?: unknown };
     if (typeof body.sql !== "string" || !Array.isArray(body.params)) return json({ error: "invalid_request" }, 400);
     const sqlText = validateSql(body.sql);
-    const connection = await pool.connect();
+
+    const client = new Client(dbUrl);
+    await client.connect();
     try {
-      const result = await connection.queryArray(sqlText, body.params as unknown[]);
+      const result = await client.queryArray(sqlText, body.params as unknown[]);
       return json({ rows: result.rows });
     } finally {
-      connection.release();
+      await client.end();
     }
   } catch (error) {
     console.error("DB proxy error", error);
     return json({ error: error instanceof Error ? error.message : "query_failed" }, 500);
   }
 });
-
