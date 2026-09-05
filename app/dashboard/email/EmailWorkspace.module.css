@@ -1,0 +1,369 @@
+.emailShell {
+  min-height: 720px;
+  height: calc(100vh - 158px);
+  display: grid;
+  grid-template-columns: 220px minmax(330px, 0.82fr) minmax(430px, 1.18fr);
+  overflow: hidden;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 24px;
+  background: #fff;
+  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.08);
+}
+
+.mailNav {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 14px;
+  border-right: 1px solid rgba(17, 24, 39, 0.07);
+  background: linear-gradient(180deg, #f8fafc 0%, #f4f6f8 100%);
+}
+
+.composeButton,
+.primaryButton,
+.secondaryButton,
+.iconButton,
+.folderButton,
+.folderActive,
+.starButton,
+.starActive,
+.backButton,
+.detailActions button,
+.bulkBar button,
+.emptyState button,
+.threadOpen,
+.composer header button {
+  font: inherit;
+}
+
+.composeButton {
+  width: 100%;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 14px;
+  cursor: pointer;
+  color: #fff;
+  background: #111827;
+  font-weight: 760;
+  box-shadow: 0 10px 26px rgba(17, 24, 39, 0.16);
+}
+
+.composeButton span { font-size: 21px; line-height: 1; font-weight: 400; }
+.composeButton:hover { transform: translateY(-1px); }
+
+.accountCard {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 8px;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 10px;
+  border: 1px solid rgba(17, 24, 39, 0.07);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.accountAvatar,
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #e8edf3;
+  color: #111827;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.accountAvatar { width: 34px; height: 34px; font-size: 12px; }
+.avatar { width: 38px; height: 38px; font-size: 11px; }
+.accountCard strong, .accountCard small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.accountCard strong { font-size: 12px; color: #1f2937; }
+.accountCard small { margin-top: 2px; color: #8b95a5; font-size: 10px; }
+.accountCard i { width: 7px; height: 7px; border-radius: 50%; background: #16a34a; box-shadow: 0 0 0 4px rgba(22, 163, 74, 0.09); }
+
+.folderList { display: grid; gap: 3px; }
+.folderButton,
+.folderActive {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 12px;
+  cursor: pointer;
+  text-align: left;
+  background: transparent;
+  color: #667085;
+}
+.folderButton:hover { background: rgba(255, 255, 255, 0.75); color: #111827; }
+.folderActive { background: #fff; color: #111827; box-shadow: 0 5px 16px rgba(15, 23, 42, 0.055); }
+.folderGlyph { font-size: 15px; text-align: center; }
+.folderButton strong, .folderActive strong { display: block; font-size: 12.5px; font-weight: 730; }
+.folderButton small, .folderActive small { display: block; margin-top: 2px; color: #9aa3b2; font-size: 9.5px; }
+
+.shortcutCard {
+  margin-top: auto;
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: 9px;
+  padding: 11px;
+  border: 1px dashed rgba(17, 24, 39, 0.12);
+  border-radius: 13px;
+  color: #64748b;
+}
+.shortcutCard > span { font-size: 17px; }
+.shortcutCard strong, .shortcutCard small { display: block; }
+.shortcutCard strong { font-size: 10.5px; color: #475569; }
+.shortcutCard small { margin-top: 4px; font-size: 9px; line-height: 1.45; }
+.shortcutCard kbd { padding: 1px 4px; border: 1px solid #d8dee8; border-radius: 4px; background: #fff; color: #334155; font: 9px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+.threadColumn,
+.detailColumn { min-width: 0; min-height: 0; background: #fff; }
+.threadColumn { display: flex; flex-direction: column; border-right: 1px solid rgba(17, 24, 39, 0.07); }
+
+.threadToolbar {
+  height: 64px;
+  flex: 0 0 64px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(17, 24, 39, 0.07);
+}
+.searchBox {
+  flex: 1;
+  height: 42px;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) 28px;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 12px;
+  background: #f7f9fb;
+}
+.searchBox > span { color: #8490a2; font-size: 18px; }
+.searchBox input { width: 100%; border: 0; outline: 0; background: transparent; color: #111827; font: inherit; font-size: 12px; }
+.searchBox input::placeholder { color: #9aa3b2; }
+.searchBox button { border: 0; background: transparent; cursor: pointer; color: #9aa3b2; font-size: 18px; }
+.iconButton {
+  width: 40px;
+  height: 40px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 11px;
+  cursor: pointer;
+  background: #fff;
+  color: #667085;
+  font-size: 17px;
+}
+.iconButton:hover { color: #111827; background: #f8fafc; }
+
+.listHeader {
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 14px;
+  border-bottom: 1px solid rgba(17, 24, 39, 0.06);
+}
+.listHeader strong, .listHeader small { display: block; }
+.listHeader strong { color: #18212f; font-size: 12px; }
+.listHeader small { margin-top: 3px; color: #98a2b3; font-size: 9.5px; }
+.selectionBadge { padding: 5px 7px; border-radius: 999px; background: #eef2f7; color: #475569; font-size: 9px; font-weight: 700; }
+
+.checkWrap { position: relative; width: 17px; height: 17px; display: inline-flex; cursor: pointer; }
+.checkWrap input { position: absolute; opacity: 0; pointer-events: none; }
+.checkWrap span { width: 17px; height: 17px; border: 1.3px solid #cbd3df; border-radius: 5px; background: #fff; }
+.checkWrap input:checked + span { background: #111827; border-color: #111827; box-shadow: inset 0 0 0 4px #111827; }
+.checkWrap input:checked + span::after { content: "✓"; position: absolute; inset: 0; display: grid; place-items: center; color: #fff; font-size: 10px; font-weight: 800; }
+
+.bulkBar {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  border-bottom: 1px solid rgba(17, 24, 39, 0.06);
+  background: #f8fafc;
+}
+.bulkBar button { padding: 6px 8px; border: 1px solid #e0e5ec; border-radius: 8px; cursor: pointer; background: #fff; color: #596579; font-size: 9.5px; font-weight: 700; }
+.bulkBar button:hover { color: #111827; border-color: #cbd3df; }
+
+.threadList { min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #d7dde6 transparent; }
+.threadRow {
+  display: grid;
+  grid-template-columns: 20px 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px 0 13px;
+  border-bottom: 1px solid rgba(17, 24, 39, 0.055);
+  background: #fff;
+}
+.threadRow:hover { background: #fafbfc; }
+.threadActive { background: #f6f8fb; box-shadow: inset 3px 0 0 #111827; }
+.threadUnread { background: #fcfdff; }
+.threadUnread .threadTop strong, .threadUnread .subjectLine { font-weight: 790; color: #111827; }
+.starButton, .starActive { width: 24px; height: 34px; border: 0; background: transparent; cursor: pointer; font-size: 14px; }
+.starButton { color: #c4cad4; }
+.starActive { color: #f5a623; }
+.threadOpen {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 12px 2px 12px 0;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+  background: transparent;
+}
+.threadMain { min-width: 0; display: block; }
+.threadTop { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; }
+.threadTop strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #3e4858; font-size: 11.5px; font-weight: 680; }
+.threadTop time { color: #9aa4b2; font-size: 9px; }
+.subjectLine { display: flex; align-items: center; gap: 5px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; margin-top: 3px; color: #4f5a6b; font-size: 11px; }
+.subjectLine em { flex: 0 0 auto; color: #d14343; font-style: normal; font-size: 9px; font-weight: 760; }
+.subjectLine b { flex: 0 0 auto; min-width: 18px; padding: 1px 4px; border-radius: 999px; background: #edf1f5; color: #778195; font-size: 8px; text-align: center; }
+.snippet { display: block; overflow: hidden; margin-top: 4px; color: #9aa3b1; font-size: 9.5px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+
+.skeletonRow { height: 78px; display: grid; grid-template-columns: 38px 1fr; gap: 10px; align-items: center; padding: 12px 16px; border-bottom: 1px solid #f0f2f5; animation: pulse 1.3s ease-in-out infinite; }
+.skeletonRow i { width: 38px; height: 38px; border-radius: 50%; background: #edf0f4; }
+.skeletonRow span, .skeletonRow b { display: block; height: 8px; border-radius: 5px; background: #edf0f4; }
+.skeletonRow b { grid-column: 2; width: 72%; margin-top: -19px; }
+@keyframes pulse { 50% { opacity: .55; } }
+
+.emptyState { display: grid; place-items: center; align-content: center; gap: 8px; min-height: 320px; padding: 30px; text-align: center; }
+.emptyState strong { color: #263142; font-size: 14px; }
+.emptyState p { max-width: 330px; margin: 0; color: #8c97a8; font-size: 11px; line-height: 1.55; }
+.emptyState button { padding: 8px 11px; border: 1px solid #dce2ea; border-radius: 9px; cursor: pointer; background: #fff; color: #465266; font-size: 10px; font-weight: 700; }
+
+.detailColumn { position: relative; display: flex; flex-direction: column; }
+.detailEmpty { flex: 1; display: grid; place-items: center; align-content: center; gap: 9px; padding: 50px; text-align: center; background: radial-gradient(circle at 50% 35%, #fafbfc 0%, #fff 52%); }
+.detailEmpty > span { width: 48px; height: 48px; display: grid; place-items: center; border: 1px solid #e1e6ed; border-radius: 15px; color: #8994a3; background: #fff; font-size: 22px; }
+.detailEmpty strong { color: #293445; font-size: 14px; }
+.detailEmpty p { max-width: 330px; margin: 0; color: #929cab; font-size: 10.5px; line-height: 1.55; }
+.detailLoading { flex: 1; display: grid; align-content: start; gap: 14px; padding: 28px; }
+.detailLoading i { height: 80px; border-radius: 15px; background: #f1f3f6; animation: pulse 1.3s ease-in-out infinite; }
+
+.detailHeader {
+  min-height: 86px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 11px;
+  padding: 14px 18px;
+  border-bottom: 1px solid rgba(17, 24, 39, 0.07);
+}
+.detailHeader p, .detailHeader h2, .detailHeader span { margin: 0; }
+.detailHeader p { color: #98a2b3; font-size: 8.5px; font-weight: 760; text-transform: uppercase; letter-spacing: .08em; }
+.detailHeader h2 { margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #18212f; font-size: 15px; line-height: 1.2; letter-spacing: -0.02em; }
+.detailHeader span { display: block; margin-top: 5px; color: #98a2b3; font-size: 9px; }
+.backButton { display: none; width: 34px; height: 34px; border: 1px solid #e2e7ed; border-radius: 9px; cursor: pointer; background: #fff; color: #667085; }
+.detailActions { display: flex; gap: 5px; }
+.detailActions button { width: 34px; height: 34px; border: 1px solid #e2e7ed; border-radius: 9px; cursor: pointer; background: #fff; color: #657083; }
+.detailActions button:hover { color: #111827; background: #f8fafc; }
+
+.messageScroll { min-height: 0; flex: 1; overflow-y: auto; padding: 16px 18px 12px; background: #fbfcfd; }
+.messageCard { padding: 16px 17px; border: 1px solid #e8ebef; border-radius: 16px; background: #fff; box-shadow: 0 5px 18px rgba(15, 23, 42, 0.035); }
+.messageCard + .messageCard { margin-top: 10px; }
+.messageMeta { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding-bottom: 12px; border-bottom: 1px solid #f0f2f5; }
+.messageMeta strong, .messageMeta small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.messageMeta strong { color: #273243; font-size: 11px; }
+.messageMeta small { margin-top: 3px; color: #98a2b3; font-size: 8.5px; }
+.messageMeta time { color: #a0a8b5; font-size: 8.5px; }
+.messageCard pre { max-width: 100%; margin: 15px 0 2px; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere; color: #3f4a5a; font: 11px/1.68 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+
+.replyBox { flex: 0 0 auto; padding: 12px 18px 15px; border-top: 1px solid rgba(17, 24, 39, 0.07); background: #fff; }
+.replyLabel { display: flex; align-items: center; gap: 7px; margin-bottom: 8px; color: #657083; }
+.replyLabel span { font-size: 15px; }
+.replyLabel strong { color: #334155; font-size: 10px; }
+.replyLabel small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; }
+.replyBox textarea { width: 100%; resize: vertical; min-height: 82px; max-height: 210px; padding: 11px 12px; border: 1px solid #dfe4eb; border-radius: 12px; outline: 0; color: #283445; background: #fafbfc; font: 11px/1.55 inherit; }
+.replyBox textarea:focus { border-color: #aeb8c7; background: #fff; box-shadow: 0 0 0 3px rgba(15, 23, 42, 0.035); }
+.replyBox > div:last-child { display: flex; justify-content: flex-end; gap: 7px; margin-top: 8px; }
+
+.primaryButton,
+.secondaryButton { min-height: 38px; display: inline-flex; align-items: center; justify-content: center; padding: 0 14px; border-radius: 10px; cursor: pointer; text-decoration: none; font-size: 10.5px; font-weight: 760; }
+.primaryButton { border: 1px solid #111827; background: #111827; color: #fff; }
+.primaryButton:hover { background: #000; }
+.secondaryButton { border: 1px solid #dfe4ea; background: #fff; color: #556173; }
+.secondaryButton:hover { background: #f8fafc; color: #111827; }
+.primaryButton:disabled, .secondaryButton:disabled { opacity: .5; cursor: not-allowed; }
+
+.composerBackdrop { position: fixed; z-index: 80; inset: 0; display: flex; align-items: flex-end; justify-content: flex-end; padding: 24px; background: rgba(15, 23, 42, 0.18); backdrop-filter: blur(3px); }
+.composer { width: min(650px, calc(100vw - 48px)); min-height: 570px; display: flex; flex-direction: column; overflow: hidden; border: 1px solid rgba(17, 24, 39, 0.12); border-radius: 20px; background: #fff; box-shadow: 0 30px 100px rgba(15, 23, 42, 0.25); animation: composerIn .18s ease-out; }
+@keyframes composerIn { from { transform: translateY(12px) scale(.99); opacity: .7; } }
+.composer header { min-height: 68px; display: flex; align-items: center; justify-content: space-between; padding: 13px 17px; border-bottom: 1px solid #e9edf2; background: #f8fafc; }
+.composer header p, .composer header h3 { margin: 0; }
+.composer header p { color: #98a2b3; font-size: 8.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; }
+.composer header h3 { margin-top: 3px; color: #1d2735; font-size: 14px; }
+.composer header button { width: 32px; height: 32px; border: 0; border-radius: 8px; cursor: pointer; background: transparent; color: #8c96a5; font-size: 21px; }
+.composer header button:hover { background: #edf1f5; color: #111827; }
+.composerFields { flex: 1; display: flex; flex-direction: column; padding: 2px 18px 0; }
+.composerFields label { min-height: 47px; display: grid; grid-template-columns: 62px minmax(0, 1fr); align-items: center; border-bottom: 1px solid #edf0f3; }
+.composerFields label span { color: #818b9a; font-size: 10px; font-weight: 700; }
+.composerFields input { width: 100%; border: 0; outline: 0; color: #263142; background: transparent; font: inherit; font-size: 11px; }
+.composerFields textarea { flex: 1; min-height: 260px; resize: none; padding: 15px 0; border: 0; outline: 0; color: #334155; font: 11.5px/1.65 inherit; }
+.composer footer { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px 15px; border-top: 1px solid #edf0f3; }
+
+.toast { position: fixed; z-index: 110; right: 26px; bottom: 25px; max-width: 420px; padding: 11px 14px; border-radius: 11px; background: #111827; color: #fff; box-shadow: 0 18px 44px rgba(15, 23, 42, 0.24); font-size: 10.5px; font-weight: 650; }
+
+.connectCard { min-height: 520px; display: grid; place-items: center; align-content: center; gap: 10px; padding: 60px; border: 1px solid rgba(17, 24, 39, 0.08); border-radius: 24px; background: radial-gradient(circle at 50% 30%, #f4f7fa 0%, #fff 58%); text-align: center; }
+.connectIcon { width: 58px; height: 58px; display: grid; place-items: center; margin-bottom: 5px; border: 1px solid #dde3eb; border-radius: 18px; background: #fff; color: #111827; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.07); font-size: 24px; font-weight: 800; }
+.kicker { margin: 0; color: #8994a4; font-size: 9px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+.connectCard h2 { max-width: 620px; margin: 2px 0 0; color: #18212f; font-size: clamp(24px, 3vw, 38px); line-height: 1.08; letter-spacing: -0.04em; }
+.connectCard > p:not(.kicker) { max-width: 570px; margin: 5px 0 8px; color: #7b8697; font-size: 12px; line-height: 1.65; }
+.connectCard small { max-width: 520px; color: #a1a9b5; font-size: 9px; }
+
+@media (max-width: 1240px) {
+  .emailShell { grid-template-columns: 190px minmax(310px, .9fr) minmax(380px, 1.1fr); }
+  .folderButton small, .folderActive small, .shortcutCard { display: none; }
+}
+
+@media (max-width: 980px) {
+  .emailShell { height: calc(100vh - 132px); min-height: 620px; grid-template-columns: 72px minmax(0, 1fr); }
+  .mailNav { padding: 12px 8px; }
+  .composeButton { width: 48px; min-height: 48px; margin: 0 auto; font-size: 0; }
+  .composeButton span { font-size: 22px; }
+  .accountCard { grid-template-columns: 1fr; padding: 7px; justify-items: center; }
+  .accountCard > div, .accountCard i { display: none; }
+  .folderButton, .folderActive { grid-template-columns: 1fr; justify-items: center; padding: 10px 4px; }
+  .folderButton > span + span, .folderActive > span + span { display: none; }
+  .folderGlyph { font-size: 17px; }
+  .detailColumn { display: none; position: absolute; z-index: 6; inset: 0 0 0 72px; }
+  .detailVisibleMobile { display: flex; }
+  .threadColumnHiddenMobile { visibility: hidden; }
+  .backButton { display: inline-flex; align-items: center; justify-content: center; }
+  .threadColumn { grid-column: 2; border-right: 0; }
+}
+
+@media (max-width: 640px) {
+  .emailShell { height: calc(100vh - 116px); min-height: 560px; grid-template-columns: 1fr; border-radius: 17px; }
+  .mailNav { display: none; }
+  .threadColumn { grid-column: 1; }
+  .detailColumn { inset: 0; }
+  .threadToolbar { padding: 9px 10px; }
+  .listHeader { padding: 8px 10px; }
+  .threadRow { padding-left: 10px; }
+  .threadOpen { grid-template-columns: 34px minmax(0, 1fr); }
+  .avatar { width: 34px; height: 34px; }
+  .detailHeader { padding: 12px 10px; }
+  .detailActions button { width: 31px; height: 31px; }
+  .messageScroll { padding: 10px; }
+  .messageCard { padding: 13px; border-radius: 13px; }
+  .replyBox { padding: 10px; }
+  .composerBackdrop { padding: 0; align-items: stretch; }
+  .composer { width: 100vw; min-height: 100vh; border: 0; border-radius: 0; }
+  .toast { right: 12px; left: 12px; bottom: 12px; text-align: center; }
+  .connectCard { min-height: 440px; padding: 35px 20px; border-radius: 17px; }
+}
