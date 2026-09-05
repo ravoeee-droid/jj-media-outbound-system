@@ -1,1 +1,0 @@
-STRATO mail work branch validation marker. This file will be removed before merge.
