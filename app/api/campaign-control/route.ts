@@ -166,7 +166,7 @@ export async function PUT(request: Request) {
         if (existing) await db.update(outreach).set({ subject, body, status: "sending", updatedAt: new Date() }).where(eq(outreach.id, existing.id));
         else { const [created] = await db.insert(outreach).values({ workspaceId, leadId: lead.id, step: 1, subject, body, status: "sending" }).returning(); outreachId = created.id; }
         await writeLog(workspaceId, "campaign_email_send", "running", undefined, lead.id);
-        const message = await sendStratoMessage({ userId: workspace.ownerId, to: lead.email, subject, body, html });
+        const message = await sendStratoMessage({ to: lead.email, subject, body, html });
         await Promise.all([
           db.update(outreach).set({ status: "sent", sentAt: new Date(), providerMessageId: message.id, providerThreadId: message.threadId, updatedAt: new Date() }).where(eq(outreach.id, outreachId!)),
           db.update(leads).set({ pipelineStage: "contacted", lastContactAt: new Date(), lastActivityAt: new Date(), updatedAt: new Date() }).where(eq(leads.id, lead.id)),
