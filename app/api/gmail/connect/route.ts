@@ -12,7 +12,9 @@ export async function GET(request: Request) {
   }
 
   const origin = googleOAuthAppBase(request.url);
-  const calendar = new URL(request.url).searchParams.get("calendar") === "1";
+  const url = new URL(request.url);
+  const calendar = url.searchParams.get("calendar") === "1";
+  const destination = url.searchParams.get("destination") === "email" ? "email" : calendar ? "whatsapp" : "outbound";
   const state = crypto.randomUUID();
   const authorizationUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   authorizationUrl.searchParams.set("client_id", clientId);
@@ -26,8 +28,7 @@ export async function GET(request: Request) {
     "openid",
     "email",
     "profile",
-    "https://www.googleapis.com/auth/gmail.compose",
-    "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/gmail.modify",
     ...(calendar ? ["https://www.googleapis.com/auth/calendar.events", "https://www.googleapis.com/auth/calendar.freebusy"] : []),
   ].join(" "));
 
@@ -39,6 +40,6 @@ export async function GET(request: Request) {
     path: "/",
     maxAge: 10 * 60,
   });
-  response.cookies.set("jj_google_destination", calendar ? "whatsapp" : "outbound", { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/", maxAge: 600 });
+  response.cookies.set("jj_google_destination", destination, { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/", maxAge: 600 });
   return response;
 }
