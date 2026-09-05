@@ -1,0 +1,100 @@
+    socket.once("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+  });
+}
+
+class BufferedTls {
+  protected buffer = Buffer.alloc(0);
+  private waiters = new Set<() => void>();
+  protected closed = false;
+
+  constructor(protected socket: TLSSocket) {
+    socket.on("data", (chunk: Buffer) => {
+      this.buffer = Buffer.concat([this.buffer, chunk]);
+      for (const wake of [...this.waiters]) wake();
+    });
+    socket.on("close", () => {
+      this.closed = true;
+      for (const wake of [...this.waiters]) wake();
+    });
+    socket.on("error", () => {
+      this.closed = true;
+      for (const wake of [...this.waiters]) wake();
+    });
+  }
+
+  protected async waitForData(ms = 15_000) {
+    if (this.buffer.length || this.closed) return;
+    await new Promise<void>((resolve, reject) => {
+      const done = () => {
+        clearTimeout(timer);
+        this.waiters.delete(done);
+        resolve();
+      };
+      const timer = setTimeout(() => {
+        this.waiters.delete(done);
+        reject(timeoutError("Mailserver"));
+      }, ms);
+      this.waiters.add(done);
+    });
+    if (this.closed && !this.buffer.length) throw new Error("Die Verbindung zum Mailserver wurde unerwartet beendet.");
+  }
+
+  protected async readLine() {
+    for (;;) {
+      const index = this.buffer.indexOf("\r\n");
+      if (index >= 0) {
+        const line = this.buffer.subarray(0, index).toString("utf8");
+        this.buffer = this.buffer.subarray(index + 2);
+        return line;
+      }
+      await this.waitForData();
+    }
+  }
+}
+
+class ImapClient extends BufferedTls {
+  private sequence = 0;
+
+  static async open() {
+    const c = config();
+    const socket = await tlsSocket(c.imapHost, c.imapPort, "STRATO IMAP");
+    const client = new ImapClient(socket);
+    const greeting = await client.readLine();
+    if (!/^\* (?:OK|PREAUTH)/i.test(greeting)) {
+      socket.destroy();
+      throw new Error(`STRATO IMAP hat die Verbindung abgelehnt: ${greeting.slice(0, 180)}`);
+    }
+    await client.execute(`LOGIN ${imapQuote(c.email)} ${imapQuote(c.password)}`);
+    return client;
+  }
+
+  private nextTag() {
+    this.sequence += 1;
+    return `A${String(this.sequence).padStart(4, "0")}`;
+  }
+
+  private async waitTagged(tag: string): Promise<ImapResult> {
+    for (;;) {
+      const text = this.buffer.toString("latin1");
+      let start = text.indexOf(`\r\n${tag} `);
+      if (start >= 0) start += 2;
+      else if (text.startsWith(`${tag} `)) start = 0;
+      if (start >= 0) {
+        const end = text.indexOf("\r\n", start);
+        if (end >= 0) {
+          const line = text.slice(start, end);
+          const match = line.match(new RegExp(`^${tag} (OK|NO|BAD)\\b`, "i"));
+          if (!match) throw new Error(`Unverständliche IMAP-Antwort: ${line.slice(0, 180)}`);
+          const response = this.buffer.subarray(0, end + 2);
+          this.buffer = this.buffer.subarray(end + 2);
+          return { status: match[1].toUpperCase() as ImapResult["status"], response, line };
+        }
+      }
+      await this.waitForData(20_000);
+    }
+  }
+
+  async executeResult(command: string) {
