@@ -1,0 +1,55 @@
+"use client";
+
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import styles from "./EmailWorkspace.module.css";
+
+type MailView = "inbox" | "unread" | "starred" | "sent" | "drafts" | "all" | "trash";
+type ThreadRow = { id: string; from: string; to: string; subject: string; date: string; internalDate: string; snippet: string; unread: boolean; starred: boolean; draft: boolean; sent: boolean; messageCount: number; labels: string[] };
+type MailMessage = { id: string; threadId: string; labels: string[]; from: string; to: string; cc: string; subject: string; date: string; messageId: string; references: string; body: string; snippet: string; internalDate: string };
+type ThreadDetail = { id: string; subject: string; unread: boolean; starred: boolean; messages: MailMessage[] };
+type Profile = { emailAddress: string };
+type Composer = { to: string; cc: string; bcc: string; subject: string; body: string };
+
+const folders: Array<{ key: MailView; label: string; hint: string; glyph: string }> = [
+  { key: "inbox", label: "Posteingang", hint: "Aktuelle Gespräche", glyph: "⌂" },
+  { key: "unread", label: "Ungelesen", hint: "Braucht Aufmerksamkeit", glyph: "●" },
+  { key: "starred", label: "Markiert", hint: "Priorisierte Mails", glyph: "★" },
+  { key: "sent", label: "Gesendet", hint: "Ausgehende E-Mails", glyph: "↗" },
+  { key: "drafts", label: "Entwürfe", hint: "Noch nicht versendet", glyph: "✎" },
+  { key: "all", label: "Alle E-Mails", hint: "Gesamtes Postfach", glyph: "≡" },
+  { key: "trash", label: "Papierkorb", hint: "Gelöschte E-Mails", glyph: "⌫" },
+];
+const emptyComposer: Composer = { to: "", cc: "", bcc: "", subject: "", body: "" };
+
+function dateLabel(value: string, internalDate: string) {
+  const date = internalDate ? new Date(Number(internalDate)) : new Date(value);
+  if (Number.isNaN(date.getTime())) return value || "—";
+  const today = new Date();
+  if (date.toDateString() === today.toDateString()) return date.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+  if (date.getFullYear() === today.getFullYear()) return date.toLocaleDateString("de-DE", { day: "2-digit", month: "short" });
+  return date.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "2-digit" });
+}
+function displayName(value: string) { return value.replace(/<[^>]+>/g, "").replace(/^"|"$/g, "").trim() || value || "Unbekannt"; }
+function address(value: string) { return value.match(/<([^>]+@[^>]+)>/)?.[1]?.trim() || value.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] || ""; }
+function initials(value: string) { return displayName(value).split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "@"; }
+
+export default function EmailWorkspace() {
+  const [view, setView] = useState<MailView>("inbox");
+  const [threads, setThreads] = useState<ThreadRow[]>([]);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [connected, setConnected] = useState<boolean | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [toast, setToast] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
+  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<ThreadDetail | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [composer, setComposer] = useState<Composer>(emptyComposer);
+  const [reply, setReply] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
+
