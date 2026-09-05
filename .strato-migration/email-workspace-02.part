@@ -1,0 +1,55 @@
+    setBusy(true);
+    try {
+      const response = await fetch("/api/email", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "modify", threadIds: ids, operation }) });
+      const payload = await response.json() as { error?: string; changed?: number };
+      if (!response.ok) throw new Error(payload.error || "Aktion fehlgeschlagen.");
+      const remove = ["archive", "trash", "spam"].includes(operation) || operation === "untrash";
+      if (remove) setThreads((current) => current.filter((row) => !ids.includes(row.id)));
+      else setThreads((current) => current.map((row) => ids.includes(row.id) ? { ...row, unread: operation === "unread" ? true : operation === "read" ? false : row.unread, starred: operation === "star" ? true : operation === "unstar" ? false : row.starred } : row));
+      if (selectedThreadId && ids.includes(selectedThreadId) && remove) { setSelectedThreadId(null); setDetail(null); }
+      setSelectedIds([]); notify(`${payload.changed ?? ids.length} E-Mail${ids.length === 1 ? "" : "s"} aktualisiert.`);
+    } catch (err) { notify(err instanceof Error ? err.message : "Aktion fehlgeschlagen."); }
+    finally { setBusy(false); }
+  }
+
+  async function submitComposer(event: FormEvent, asDraft = false) {
+    event.preventDefault(); if (busy) return; setBusy(true);
+    try {
+      const response = await fetch("/api/email", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: asDraft ? "draft" : "send", ...composer }) });
+      const payload = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(payload.error || "E-Mail konnte nicht verarbeitet werden.");
+      setComposerOpen(false); setComposer(emptyComposer); notify(asDraft ? "Entwurf bei STRATO gespeichert." : "E-Mail über STRATO gesendet.");
+      if (view === "sent" || view === "drafts") void loadList(view, search, true);
+    } catch (err) { notify(err instanceof Error ? err.message : "E-Mail konnte nicht verarbeitet werden."); }
+    finally { setBusy(false); }
+  }
+
+  async function sendReply(event: FormEvent) {
+    event.preventDefault(); if (!detail || !reply.trim() || busy) return;
+    const own = profile?.emailAddress?.toLowerCase() || "";
+    const inbound = [...detail.messages].reverse().find((message) => address(message.from).toLowerCase() !== own) || detail.messages.at(-1);
+    const to = address(inbound?.from || "");
+    if (!to) { notify("Empfänger konnte nicht erkannt werden."); return; }
+    setBusy(true);
+    try {
+      const response = await fetch("/api/email", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "reply", threadId: detail.id, to, subject: detail.subject, body: reply.trim() }) });
+      const payload = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(payload.error || "Antwort konnte nicht gesendet werden.");
+      setReply(""); notify("Antwort über STRATO gesendet.");
+    } catch (err) { notify(err instanceof Error ? err.message : "Antwort konnte nicht gesendet werden."); }
+    finally { setBusy(false); }
+  }
+
+  if (!loading && connected === false) return (
+    <section className={styles.connectCard}>
+      <div className={styles.connectIcon}>@</div><p className={styles.kicker}>STRATO Mail</p><h2>Dein STRATO-Postfach direkt im Growth OS.</h2>
+      <p>Für den Live-Zugriff fehlen nur die serverseitigen Zugangsdaten. Danach funktionieren Posteingang, Suche, Antworten, Senden, Entwürfe, Markierungen und Ordner direkt hier.</p>
+      <div className={styles.shortcutCard}><span>✓</span><div><strong>Server sind bereits vorkonfiguriert</strong><small>IMAP 993 · SMTP 465 · SSL/TLS</small></div></div>
+      <small>In Vercel einmal <strong>STRATO_MAIL_EMAIL</strong> und <strong>STRATO_MAIL_PASSWORD</strong> hinterlegen. Das Passwort gehört nicht in den Browser oder in GitHub.</small>
+    </section>
+  );
+
+  return (
+    <div className={styles.emailShell}>
+      <aside className={styles.mailNav}>
+        <button className={styles.composeButton} type="button" onClick={() => { setComposer(emptyComposer); setComposerOpen(true); }}><span>＋</span> Neue E-Mail</button>
