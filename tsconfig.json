@@ -19,7 +19,8 @@
       }
     ],
     "paths": {
-      "@/*": ["./*"]
+      "@/*": ["./*"],
+      "ffmpeg-static": ["./lib/ffmpeg-static-runtime"]
     }
   },
   "include": [
