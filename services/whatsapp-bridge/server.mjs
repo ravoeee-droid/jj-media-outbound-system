@@ -25,6 +25,14 @@ if (!config.baseUrl || !config.cookie || !config.workerId) throw new Error("Loka
 const ollamaModel = String(config.ollamaModel || "qwen3:4b");
 const ollamaUrl = "http://127.0.0.1:11434";
 
+const OUTBOUND_POLL_MIN_MS = 2_500;
+const OUTBOUND_POLL_MAX_MS = 20_000;
+const AI_POLL_MIN_MS = 1_500;
+const AI_POLL_MAX_MS = 30_000;
+const STATUS_INTERVAL_MS = 60_000;
+const OLLAMA_INTERVAL_MS = 5 * 60_000;
+const TICK_INTERVAL_MS = 60_000;
+
 function acquirePid() {
   if (existsSync(pidPath)) {
     const old = Number(readFileSync(pidPath, "utf8"));
@@ -162,12 +170,12 @@ async function runLocalAi(job) {
 }
 
 async function aiPump() {
-  if (aiPumpBusy || stopping) return;
+  if (aiPumpBusy || stopping) return false;
   aiPumpBusy = true;
   try {
     const result = await api({ action: "ai_pull", workerId: config.workerId }, 20_000);
     const job = result.job;
-    if (!job) return;
+    if (!job) return false;
     try {
       const output = await runLocalAi(job);
       await api({ action: "ai_result", workerId: config.workerId, jobId: job.id, model: output.model, content: output.content }, 20_000);
@@ -175,8 +183,10 @@ async function aiPump() {
       await api({ action: "ai_result", workerId: config.workerId, jobId: job.id, model: ollamaModel, error: error.message || "Lokale KI fehlgeschlagen" }, 20_000).catch(() => undefined);
       console.warn(`KI: ${error.message}`);
     }
+    return true;
   } catch (error) {
     console.warn(`KI-Pumpe: ${error.message}`);
+    return false;
   } finally { aiPumpBusy = false; }
 }
 
@@ -221,13 +231,16 @@ async function sendPulled(message) {
 }
 
 async function pump() {
-  if (!connected || !sock || pumpBusy || stopping) return;
+  if (!connected || !sock || pumpBusy || stopping) return false;
   pumpBusy = true;
   try {
     const result = await api({ action: "pull", workerId: config.workerId }, 35_000);
-    if (result.message) await sendPulled(result.message);
+    if (!result.message) return false;
+    await sendPulled(result.message);
+    return true;
   } catch (error) {
     console.warn(`Versand: ${error.message}`);
+    return false;
   } finally { pumpBusy = false; }
 }
 
@@ -300,16 +313,39 @@ async function connect() {
   });
 }
 
-const statusTimer = setInterval(() => void statusHeartbeat(), 20_000);
-const pumpTimer = setInterval(() => void pump(), 2_500);
-const aiTimer = setInterval(() => void aiPump(), 1_200);
-const ollamaTimer = setInterval(() => void checkOllama().then(() => statusHeartbeat()), 30_000);
-const tickTimer = setInterval(() => { if (connected && !stopping) void api({ action: "tick", workerId: config.workerId }, 110_000).catch((error) => console.warn(`Automatik: ${error.message}`)); }, 60_000);
+function createAdaptiveLoop(task, { minMs, maxMs, factor = 1.7 }) {
+  let timer = null;
+  let delay = minMs;
+
+  const run = async () => {
+    if (stopping) return;
+    let didWork = false;
+    try {
+      didWork = await task() === true;
+    } finally {
+      delay = didWork ? minMs : Math.min(maxMs, Math.max(minMs, Math.round(delay * factor)));
+      timer = setTimeout(run, delay);
+    }
+  };
+
+  timer = setTimeout(run, minMs);
+  return () => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+  };
+}
+
+const stopPumpLoop = createAdaptiveLoop(pump, { minMs: OUTBOUND_POLL_MIN_MS, maxMs: OUTBOUND_POLL_MAX_MS });
+const stopAiLoop = createAdaptiveLoop(aiPump, { minMs: AI_POLL_MIN_MS, maxMs: AI_POLL_MAX_MS });
+const statusTimer = setInterval(() => void statusHeartbeat(), STATUS_INTERVAL_MS);
+const ollamaTimer = setInterval(() => void checkOllama().then(() => statusHeartbeat()), OLLAMA_INTERVAL_MS);
+const tickTimer = setInterval(() => { if (connected && !stopping) void api({ action: "tick", workerId: config.workerId }, 110_000).catch((error) => console.warn(`Automatik: ${error.message}`)); }, TICK_INTERVAL_MS);
 
 async function shutdown() {
   if (stopping) return;
   stopping = true;
-  clearInterval(statusTimer); clearInterval(pumpTimer); clearInterval(aiTimer); clearInterval(ollamaTimer); clearInterval(tickTimer);
+  stopPumpLoop(); stopAiLoop();
+  clearInterval(statusTimer); clearInterval(ollamaTimer); clearInterval(tickTimer);
   historySync?.stop();
   connected = false; qrData = "";
   try { await statusHeartbeat(); } catch { /* best effort */ }
