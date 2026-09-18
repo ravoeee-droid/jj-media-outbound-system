@@ -144,7 +144,9 @@ export function installHistorySync({ sock, config, messageContent, phoneFromKey 
     if (type === "append") void enqueue(messages, "WhatsApp-Nachlauf");
   });
 
-  const timer = setInterval(() => void sweep(), 30_000);
+  // History imports already trigger an immediate sweep. Keep only a low-frequency
+  // safety sweep while idle so the local bridge does not burn Vercel invocations.
+  const timer = setInterval(() => void sweep(), 5 * 60_000);
 
   return {
     ingest(entry) { return enqueue([entry], "Neuer WhatsApp-Kontakt"); },
