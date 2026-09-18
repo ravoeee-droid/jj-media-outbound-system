@@ -137,7 +137,7 @@ async function checkOllama() {
 }
 
 async function statusHeartbeat() {
-  try { await api({ action: "status", workerId: config.workerId, connected, phone, qr: connected ? "" : qrData, version: "baileys-6.7.24+ollama-2-history", aiReady, aiModel: ollamaModel }, 20_000); }
+  try { await api({ action: "status", workerId: config.workerId, connected, phone, qr: connected ? "" : qrData, version: "baileys-6.7.24+ollama-3-adaptive", aiReady, aiModel: ollamaModel }, 20_000); }
   catch (error) { console.warn(`Status: ${error.message}`); }
 }
 
