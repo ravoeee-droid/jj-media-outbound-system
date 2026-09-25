@@ -27,6 +27,8 @@ jobs:
         run: npm run lint
       - name: WhatsApp safety tests
         run: npm run test:whatsapp
+      - name: Lead Scout validation tests
+        run: npm run test:research
       - name: Check WhatsApp history sync script
         run: node --check services/whatsapp-bridge/history-sync.mjs
       - name: Production build

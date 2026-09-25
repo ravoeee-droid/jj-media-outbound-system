@@ -24,8 +24,8 @@ type Candidate = {
 type Payload = {
   config: { enabled: boolean; target: number; queries: string[] };
   candidates: Candidate[];
-  counts: { new: number; shortlisted: number; dismissed: number; imported: number };
-  status: "new" | "shortlisted" | "dismissed" | "imported";
+  counts: { call_ready: number; new: number; shortlisted: number; dismissed: number; imported: number };
+  status: "call_ready" | "new" | "shortlisted" | "dismissed" | "imported";
   latestRunAt: string | null;
   latestSource: string | null;
   capabilities: { googlePlaces: boolean; dailyCron: boolean };
@@ -40,7 +40,7 @@ function formatDate(value: string | null) {
 
 export default function ResearchFeedWorkspace() {
   const [data, setData] = useState<Payload | null>(null);
-  const [status, setStatus] = useState<"new" | "shortlisted" | "dismissed" | "imported">("new");
+  const [status, setStatus] = useState<"call_ready" | "new" | "shortlisted" | "dismissed" | "imported">("call_ready");
   const [queriesText, setQueriesText] = useState("");
   const [target, setTarget] = useState(100);
   const [enabled, setEnabled] = useState(false);
@@ -126,12 +126,12 @@ export default function ResearchFeedWorkspace() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ action: "generate" }),
       });
-      const result = await response.json() as { inserted?: number; discovered?: number; duplicates?: number; source?: string; error?: string; configured?: boolean };
+      const result = await response.json() as { inserted?: number; discovered?: number; duplicates?: number; callReady?: number; readyAfter?: number; source?: string; error?: string; configured?: boolean };
       if (!response.ok) throw new Error(result.error || "Recherche konnte nicht gestartet werden.");
       if (result.configured === false) throw new Error("Bitte zuerst mindestens ein Suchprofil eintragen.");
-      setMessage(String(result.inserted || 0) + " neue Kandidaten gefunden · " + String(result.duplicates || 0) + " bereits bekannt.");
-      setStatus("new");
-      await load("new", true);
+      setMessage(String(result.callReady || 0) + " neue Call-ready Leads · jetzt " + String(result.readyAfter || 0) + " / " + String(target) + " bereit · " + String(result.duplicates || 0) + " Dubletten entfernt.");
+      setStatus("call_ready");
+      await load("call_ready", true);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Recherche fehlgeschlagen.");
     } finally {
@@ -189,8 +189,8 @@ export default function ResearchFeedWorkspace() {
       <section className={styles.configCard}>
         <div>
           <small>SUCHPROFILE</small>
-          <h2>Welche Unternehmen soll das System täglich finden?</h2>
-          <p>Eine Suche pro Zeile. Je konkreter Branche + Region, desto sauberer wird der Feed.</p>
+          <h2>Welche Unternehmen soll der Lead Scout morgens call-ready bereitstellen?</h2>
+          <p>Eine Suche pro Zeile. Der Scout findet, dedupliziert, prüft Kontaktdaten und füllt den Call-ready-Vorrat bis zum Tagesziel auf.</p>
         </div>
         <div className={styles.configFields}>
           <label>
@@ -198,7 +198,7 @@ export default function ResearchFeedWorkspace() {
             <textarea rows={5} value={queriesText} onChange={(event) => setQueriesText(event.target.value)} placeholder={"Reisebüro Baden-Württemberg\nBoutique Hotel Baden-Württemberg\nKosmetikstudio Stuttgart\nÄsthetische Medizin Baden-Württemberg\nPremium Dienstleister Karlsruhe"} />
           </label>
           <label className={styles.target}>
-            <span>Tagesziel</span>
+            <span>Call-ready Ziel</span>
             <select value={target} onChange={(event) => setTarget(Number(event.target.value))}>
               {[20, 40, 60, 80, 100].map((value) => <option key={value} value={value}>{value} Kandidaten</option>)}
             </select>
@@ -218,22 +218,23 @@ export default function ResearchFeedWorkspace() {
       <section className={styles.infoBar}>
         <div><strong>Quelle</strong><span>{data?.capabilities.googlePlaces ? "Google Places + Web-Fallback" : "Web-Suche · Google Places optional"}</span></div>
         <div><strong>Letzter Fund</strong><span>{formatDate(data?.latestRunAt || null)}</span></div>
-        <div><strong>Prinzip</strong><span>CRM-Dubletten werden vor dem Feed entfernt</span></div>
+        <div><strong>Call-ready</strong><span>Nur Leads mit validierter, plausibler Telefonnummer</span></div>
       </section>
 
       <section className={styles.feedCard}>
         <div className={styles.feedHead}>
           <div className={styles.tabs}>
-            <button data-active={status === "new"} onClick={() => setStatus("new")}>Neu <b>{data?.counts.new || 0}</b></button>
+            <button data-active={status === "call_ready"} onClick={() => setStatus("call_ready")}>Call-ready <b>{data?.counts.call_ready || 0}</b></button>
+            <button data-active={status === "new"} onClick={() => setStatus("new")}>Prüfen <b>{data?.counts.new || 0}</b></button>
             <button data-active={status === "shortlisted"} onClick={() => setStatus("shortlisted")}>Im Intake <b>{data?.counts.shortlisted || 0}</b></button>
             <button data-active={status === "dismissed"} onClick={() => setStatus("dismissed")}>Verworfen <b>{data?.counts.dismissed || 0}</b></button>
             <button data-active={status === "imported"} onClick={() => setStatus("imported")}>Übernommen <b>{data?.counts.imported || 0}</b></button>
           </div>
           <div className={styles.bulk}>
             <span>{selected.size} ausgewählt</span>
-            {status === "new" && <button onClick={selectTop30}>Top 30</button>}
-            {status === "new" && <button className={styles.primary} disabled={!selected.size || Boolean(busy)} onClick={() => void toIntake()}>{busy === "intake" ? "Öffnet …" : "Im Intake prüfen"}</button>}
-            {(status === "new" || status === "shortlisted") && <button disabled={!selected.size || Boolean(busy)} onClick={() => void changeStatus("dismiss")}>Verwerfen</button>}
+            {(status === "call_ready" || status === "new") && <button onClick={selectTop30}>Top 30</button>}
+            {(status === "call_ready" || status === "new") && <button className={styles.primary} disabled={!selected.size || Boolean(busy)} onClick={() => void toIntake()}>{busy === "intake" ? "Öffnet …" : "Im Intake prüfen"}</button>}
+            {(status === "call_ready" || status === "new" || status === "shortlisted") && <button disabled={!selected.size || Boolean(busy)} onClick={() => void changeStatus("dismiss")}>Verwerfen</button>}
             {status === "shortlisted" && <button disabled={!selected.size || Boolean(busy)} onClick={() => void changeStatus("restore")}>Zurück in Neu</button>}
             {status === "dismissed" && <button disabled={!selected.size || Boolean(busy)} onClick={() => void changeStatus("restore")}>Wiederherstellen</button>}
           </div>
@@ -263,7 +264,7 @@ export default function ResearchFeedWorkspace() {
             </tbody>
           </table>
           {loading && <div className={styles.empty}>Feed wird geladen …</div>}
-          {!loading && !candidates.length && <div className={styles.empty}>{status === "new" ? "Noch keine neuen Kandidaten. Suchprofil speichern und Recherche starten." : "Dieser Bereich ist leer."}</div>}
+          {!loading && !candidates.length && <div className={styles.empty}>{status === "call_ready" ? "Noch keine Call-ready Leads. Suchprofil speichern und den Lead Scout starten." : status === "new" ? "Keine unvollständigen Kandidaten zur Prüfung." : "Dieser Bereich ist leer."}</div>
         </div>
       </section>
 

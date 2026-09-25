@@ -1,8 +1,9 @@
-import { and, desc, eq, inArray, or } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, or } from "drizzle-orm";
 import { getDb } from "@/db";
 import { leads, researchCandidates, settings } from "@/db/schema";
 import { domainFromUrl, normalizeCompany, normalizeWebsite } from "@/lib/leads";
 import { enrichWebsite } from "@/lib/website-enrichment";
+import { isCallReady, scoreValidatedCandidate, validateResearchContacts, type ResearchContactValidation } from "@/lib/research-validation";
 
 export type ResearchFeedConfig = {
   enabled: boolean;
@@ -105,80 +106,91 @@ async function fetchJson<T>(url: URL) {
   return response.json() as Promise<T>;
 }
 
-async function googlePlacesSearch(query: string): Promise<DiscoveredCandidate[]> {
+async function googlePlacesSearch(query: string, limit = 60): Promise<DiscoveredCandidate[]> {
   const key = process.env.GOOGLE_PLACES_API_KEY?.trim();
   if (!key) return [];
-  const apiKey = key;
+  const output: DiscoveredCandidate[] = [];
+  let pageToken = "";
 
-  const response = await fetch("https://places.googleapis.com/v1/places:searchText", {
-    method: "POST",
-    cache: "no-store",
-    headers: {
-      accept: "application/json",
-      "content-type": "application/json",
-      "x-goog-api-key": apiKey,
-      "x-goog-field-mask": [
-        "places.id",
-        "places.displayName",
-        "places.formattedAddress",
-        "places.nationalPhoneNumber",
-        "places.websiteUri",
-        "places.primaryType",
-        "places.rating",
-        "places.userRatingCount",
-      ].join(","),
-    },
-    body: JSON.stringify({
-      textQuery: query,
-      languageCode: "de",
-      regionCode: "DE",
-      pageSize: 20,
-    }),
-    signal: AbortSignal.timeout(15_000),
-  });
-
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new Error("Google Places (New): HTTP " + response.status + (detail ? " · " + detail.slice(0, 240) : ""));
-  }
-
-  const result = await response.json() as {
-    places?: Array<{
-      id?: string;
-      displayName?: { text?: string; languageCode?: string };
-      formattedAddress?: string;
-      nationalPhoneNumber?: string;
-      websiteUri?: string;
-      primaryType?: string;
-      rating?: number;
-      userRatingCount?: number;
-    }>;
-  };
-
-  return (result.places || [])
-    .filter((place) => place.id && place.displayName?.text)
-    .slice(0, 20)
-    .map((place) => ({
-      source: "google_places" as const,
-      sourceQuery: query,
-      externalId: place.id!,
-      company: place.displayName!.text!,
-      websiteUrl: normalizeWebsite(place.websiteUri || ""),
-      phone: place.nationalPhoneNumber || "",
-      email: "",
-      city: place.formattedAddress || "",
-      region: "",
-      category: place.primaryType || "other",
-      ratingX10: Math.max(0, Math.round(Number(place.rating || 0) * 10)),
-      reviewCount: Math.max(0, Math.round(Number(place.userRatingCount || 0))),
-      raw: {
-        placeId: place.id,
-        rating: place.rating || 0,
-        reviewCount: place.userRatingCount || 0,
-        address: place.formattedAddress || "",
-        api: "places-new",
+  for (let page = 0; page < 3 && output.length < Math.min(60, limit); page += 1) {
+    const response = await fetch("https://places.googleapis.com/v1/places:searchText", {
+      method: "POST",
+      cache: "no-store",
+      headers: {
+        accept: "application/json",
+        "content-type": "application/json",
+        "x-goog-api-key": key,
+        "x-goog-field-mask": [
+          "places.id",
+          "places.displayName",
+          "places.formattedAddress",
+          "places.nationalPhoneNumber",
+          "places.websiteUri",
+          "places.primaryType",
+          "places.rating",
+          "places.userRatingCount",
+          "nextPageToken",
+        ].join(","),
       },
-    }));
+      body: JSON.stringify({
+        textQuery: query,
+        languageCode: "de",
+        regionCode: "DE",
+        pageSize: Math.min(20, Math.max(1, Math.min(60, limit) - output.length)),
+        ...(pageToken ? { pageToken } : {}),
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      throw new Error("Google Places (New): HTTP " + response.status + (detail ? " · " + detail.slice(0, 240) : ""));
+    }
+
+    const result = await response.json() as {
+      nextPageToken?: string;
+      places?: Array<{
+        id?: string;
+        displayName?: { text?: string; languageCode?: string };
+        formattedAddress?: string;
+        nationalPhoneNumber?: string;
+        websiteUri?: string;
+        primaryType?: string;
+        rating?: number;
+        userRatingCount?: number;
+      }>;
+    };
+
+    for (const place of result.places || []) {
+      if (!place.id || !place.displayName?.text) continue;
+      output.push({
+        source: "google_places",
+        sourceQuery: query,
+        externalId: place.id,
+        company: place.displayName.text,
+        websiteUrl: normalizeWebsite(place.websiteUri || ""),
+        phone: place.nationalPhoneNumber || "",
+        email: "",
+        city: place.formattedAddress || "",
+        region: "",
+        category: place.primaryType || "other",
+        ratingX10: Math.max(0, Math.round(Number(place.rating || 0) * 10)),
+        reviewCount: Math.max(0, Math.round(Number(place.userRatingCount || 0))),
+        raw: {
+          placeId: place.id,
+          rating: place.rating || 0,
+          reviewCount: place.userRatingCount || 0,
+          address: place.formattedAddress || "",
+          api: "places-new",
+          phoneSource: place.nationalPhoneNumber ? "google_places" : "",
+        },
+      });
+      if (output.length >= Math.min(60, limit)) break;
+    }
+    pageToken = result.nextPageToken || "";
+    if (!pageToken) break;
+  }
+  return output;
 }
 
 function decodeHtml(value: string) {
@@ -264,150 +276,218 @@ function candidateIdentity(item: DiscoveredCandidate) {
   return domain ? "domain:" + domain : "company:" + normalizeCompany(item.company);
 }
 
+function validateCandidate(item: DiscoveredCandidate): ResearchContactValidation {
+  const instagramUrl = typeof item.raw.instagramUrl === "string" ? item.raw.instagramUrl : "";
+  const validation = validateResearchContacts({
+    phone: item.phone,
+    email: item.email,
+    instagramUrl,
+    websiteUrl: item.websiteUrl,
+    phoneSource: typeof item.raw.phoneSource === "string" ? item.raw.phoneSource : item.phone ? item.source : "",
+    emailSource: typeof item.raw.emailSource === "string" ? item.raw.emailSource : item.email ? item.source : "",
+    instagramSource: typeof item.raw.instagramSource === "string" ? item.raw.instagramSource : instagramUrl ? "website" : "",
+  });
+  item.phone = validation.phone.normalized;
+  item.email = validation.email.normalized;
+  item.raw = { ...item.raw, instagramUrl: validation.instagram.normalized, contactValidation: validation };
+  return validation;
+}
+
 function scoreCandidate(item: DiscoveredCandidate) {
-  let score = 20;
-  if (item.websiteUrl) score += 18;
-  if (item.phone) score += 25;
-  if (item.email) score += 22;
-  if (typeof item.raw.instagramUrl === "string" && item.raw.instagramUrl) score += 8;
-  if (item.ratingX10 >= 40) score += 5;
-  if (item.reviewCount >= 10) score += 3;
-  if (item.reviewCount >= 50) score += 3;
-  if (item.reviewCount >= 150) score += 4;
-  return Math.min(100, score);
+  const validation = validateCandidate(item);
+  return scoreValidatedCandidate({
+    websiteUrl: item.websiteUrl,
+    source: item.source,
+    ratingX10: item.ratingX10,
+    reviewCount: item.reviewCount,
+    validation,
+  });
 }
 
 function reasonFor(item: DiscoveredCandidate, score: number) {
+  const validation = validateCandidate(item);
   const parts = [];
-  if (item.phone) parts.push("Telefon vorhanden");
-  if (item.email) parts.push("E-Mail vorhanden");
+  if (validation.phone.valid) parts.push("Telefon validiert");
+  if (validation.email.valid) parts.push(validation.email.corporateMatch ? "Firmen-E-Mail validiert" : "E-Mail plausibel");
+  if (validation.instagram.valid) parts.push("Instagram-Profil validiert");
   if (item.websiteUrl) parts.push("Website vorhanden");
-  if (typeof item.raw.instagramUrl === "string" && item.raw.instagramUrl) parts.push("Instagram gefunden");
   if (item.reviewCount >= 50) parts.push(item.reviewCount + " Google-Bewertungen");
-  if (!parts.length) parts.push("Recherchekandidat");
+  if (!parts.length) parts.push("Kontakt noch unvollständig");
   return parts.join(" · ") + " · Score " + score + "/100";
 }
 
-async function enrichTopWebsites(items: DiscoveredCandidate[]) {
+async function enrichCandidates(items: DiscoveredCandidate[], budgetMs = 190_000) {
+  const startedAt = Date.now();
   const candidates = items
     .filter((item) => item.websiteUrl)
-    .sort((a, b) => scoreCandidate(b) - scoreCandidate(a))
-    .slice(0, 20);
+    .sort((a, b) => {
+      const aPhone = validateCandidate(a).phone.valid ? 1 : 0;
+      const bPhone = validateCandidate(b).phone.valid ? 1 : 0;
+      return aPhone - bPhone || scoreCandidate(b) - scoreCandidate(a);
+    })
+    .slice(0, 120);
 
-  for (let index = 0; index < candidates.length; index += 3) {
-    const batch = candidates.slice(index, index + 3);
+  let enriched = 0;
+  let failed = 0;
+  for (let index = 0; index < candidates.length; index += 5) {
+    if (Date.now() - startedAt >= budgetMs) break;
+    const batch = candidates.slice(index, index + 5);
     const results = await Promise.allSettled(batch.map(async (item) => {
-      const enriched = await enrichWebsite(item.websiteUrl);
-      item.email ||= enriched.email;
-      item.phone ||= enriched.phone;
-      item.city ||= enriched.city;
-      item.region ||= enriched.region;
-      const socialLinks = enriched.evidence
-        .filter((entry) => entry.kind === "social")
-        .map((entry) => entry.value);
+      const enrichedWebsite = await enrichWebsite(item.websiteUrl);
+      if (!item.email && enrichedWebsite.email) {
+        item.email = enrichedWebsite.email;
+        item.raw.emailSource = "website";
+      }
+      if (!item.phone && enrichedWebsite.phone) {
+        item.phone = enrichedWebsite.phone;
+        item.raw.phoneSource = "website";
+      }
+      item.city ||= enrichedWebsite.city;
+      item.region ||= enrichedWebsite.region;
+      const socialLinks = enrichedWebsite.evidence.filter((entry) => entry.kind === "social").map((entry) => entry.value);
       const instagramUrl = socialLinks.find((url) => /instagram\.com/i.test(url)) || "";
       item.raw = {
         ...item.raw,
-        websiteConfidence: enriched.confidence,
-        websitePages: enriched.pagesScanned.slice(0, 6),
-        executive: enriched.ceo,
+        websiteConfidence: enrichedWebsite.confidence,
+        websitePages: enrichedWebsite.pagesScanned.slice(0, 6),
+        executive: enrichedWebsite.ceo,
         socialLinks: socialLinks.slice(0, 5),
-        instagramUrl,
+        instagramUrl: instagramUrl || item.raw.instagramUrl || "",
+        instagramSource: instagramUrl ? "website" : item.raw.instagramSource || "",
       };
+      validateCandidate(item);
     }));
-    void results;
+    enriched += results.filter((result) => result.status === "fulfilled").length;
+    failed += results.filter((result) => result.status === "rejected").length;
   }
+  return { enriched, failed };
+}
+
+type ResearchRunSummary = {
+  finishedAt: string;
+  source: string;
+  target: number;
+  readyBefore: number;
+  readyAdded: number;
+  readyAfter: number;
+  discovered: number;
+  inserted: number;
+  duplicates: number;
+  enriched: number;
+};
+
+async function saveResearchRunSummary(workspaceId: string, summary: ResearchRunSummary) {
+  await getDb().insert(settings).values({ workspaceId, key: "research_feed_last_run", value: JSON.stringify(summary) })
+    .onConflictDoUpdate({ target: [settings.workspaceId, settings.key], set: { value: JSON.stringify(summary), updatedAt: new Date() } });
+}
+
+export async function getResearchFeedLastRun(workspaceId: string): Promise<ResearchRunSummary | null> {
+  const [row] = await getDb().select({ value: settings.value }).from(settings)
+    .where(and(eq(settings.workspaceId, workspaceId), eq(settings.key, "research_feed_last_run"))).limit(1);
+  if (!row?.value) return null;
+  try { return JSON.parse(row.value) as ResearchRunSummary; } catch { return null; }
 }
 
 export async function runResearchFeed(workspaceId: string, override?: Partial<ResearchFeedConfig>) {
   const stored = await getResearchFeedConfig(workspaceId);
   const config = normalizeResearchConfig({ ...stored, ...override });
   if (!config.queries.length) {
-    return { ok: true, configured: false, discovered: 0, inserted: 0, duplicates: 0, source: "none", config };
+    return { ok: true, configured: false, discovered: 0, inserted: 0, duplicates: 0, callReady: 0, readyBefore: 0, readyAfter: 0, enriched: 0, source: "none", config };
   }
 
+  const db = getDb();
+  const existingReady = await db.select({ id: researchCandidates.id }).from(researchCandidates)
+    .where(and(eq(researchCandidates.workspaceId, workspaceId), eq(researchCandidates.status, "call_ready"))).limit(config.target);
+  const readyBefore = existingReady.length;
+  const needed = Math.max(0, config.target - readyBefore);
+
+  if (!needed) {
+    const summary: ResearchRunSummary = { finishedAt: new Date().toISOString(), source: "stock", target: config.target, readyBefore, readyAdded: 0, readyAfter: readyBefore, discovered: 0, inserted: 0, duplicates: 0, enriched: 0 };
+    await saveResearchRunSummary(workspaceId, summary);
+    return { ok: true, configured: true, discovered: 0, inserted: 0, duplicates: 0, callReady: 0, readyBefore, readyAfter: readyBefore, enriched: 0, source: "stock", config };
+  }
+
+  const discoveryTarget = Math.min(300, Math.max(config.target, needed * 3));
   const discovered: DiscoveredCandidate[] = [];
   const seen = new Set<string>();
   let googleUsed = false;
 
   for (const query of config.queries) {
-    if (discovered.length >= config.target) break;
+    if (discovered.length >= discoveryTarget) break;
     let rows: DiscoveredCandidate[] = [];
     try {
-      rows = await googlePlacesSearch(query);
+      rows = await googlePlacesSearch(query, Math.min(60, discoveryTarget - discovered.length));
       if (rows.length) googleUsed = true;
-    } catch {
-      rows = [];
-    }
+    } catch { rows = []; }
     if (!rows.length) rows = await webSearch(query).catch(() => []);
-
     for (const row of rows) {
+      validateCandidate(row);
       const identity = candidateIdentity(row);
       if (!identity || seen.has(identity)) continue;
       seen.add(identity);
       discovered.push(row);
-      if (discovered.length >= config.target) break;
+      if (discovered.length >= discoveryTarget) break;
     }
   }
 
-  if (discovered.length < config.target) {
+  if (discovered.length < discoveryTarget) {
     for (const query of config.queries) {
-      if (discovered.length >= config.target) break;
+      if (discovered.length >= discoveryTarget) break;
       const fallback = await webSearch(query).catch(() => []);
       for (const row of fallback) {
+        validateCandidate(row);
         const identity = candidateIdentity(row);
         if (!identity || seen.has(identity)) continue;
         seen.add(identity);
         discovered.push(row);
-        if (discovered.length >= config.target) break;
+        if (discovered.length >= discoveryTarget) break;
       }
     }
   }
 
-  await enrichTopWebsites(discovered);
-
   const companies = [...new Set(discovered.map((item) => normalizeCompany(item.company)).filter(Boolean))];
   const domains = [...new Set(discovered.map((item) => domainFromUrl(item.websiteUrl)).filter(Boolean))];
-
-  const db = getDb();
-  const [leadCompanyRows, leadDomainRows, candidateCompanyRows, candidateDomainRows] = await Promise.all([
-    companies.length
-      ? db.select({ normalizedCompany: leads.normalizedCompany }).from(leads)
-          .where(and(eq(leads.workspaceId, workspaceId), inArray(leads.normalizedCompany, companies)))
-      : Promise.resolve([]),
-    domains.length
-      ? db.select({ domain: leads.domain }).from(leads)
-          .where(and(eq(leads.workspaceId, workspaceId), inArray(leads.domain, domains)))
-      : Promise.resolve([]),
-    companies.length
-      ? db.select({ normalizedCompany: researchCandidates.normalizedCompany }).from(researchCandidates)
-          .where(and(eq(researchCandidates.workspaceId, workspaceId), inArray(researchCandidates.normalizedCompany, companies)))
-      : Promise.resolve([]),
-    domains.length
-      ? db.select({ domain: researchCandidates.domain }).from(researchCandidates)
-          .where(and(eq(researchCandidates.workspaceId, workspaceId), inArray(researchCandidates.domain, domains)))
-      : Promise.resolve([]),
+  const [leadCompanyRows, leadDomainRows, candidateCompanyRows, candidateDomainRows, leadPhoneRows, candidatePhoneRows] = await Promise.all([
+    companies.length ? db.select({ normalizedCompany: leads.normalizedCompany }).from(leads).where(and(eq(leads.workspaceId, workspaceId), inArray(leads.normalizedCompany, companies))) : Promise.resolve([]),
+    domains.length ? db.select({ domain: leads.domain }).from(leads).where(and(eq(leads.workspaceId, workspaceId), inArray(leads.domain, domains))) : Promise.resolve([]),
+    companies.length ? db.select({ normalizedCompany: researchCandidates.normalizedCompany }).from(researchCandidates).where(and(eq(researchCandidates.workspaceId, workspaceId), inArray(researchCandidates.normalizedCompany, companies))) : Promise.resolve([]),
+    domains.length ? db.select({ domain: researchCandidates.domain }).from(researchCandidates).where(and(eq(researchCandidates.workspaceId, workspaceId), inArray(researchCandidates.domain, domains))) : Promise.resolve([]),
+    db.select({ phone: leads.phone }).from(leads).where(and(eq(leads.workspaceId, workspaceId), ne(leads.phone, ""))),
+    db.select({ phone: researchCandidates.phone }).from(researchCandidates).where(and(eq(researchCandidates.workspaceId, workspaceId), ne(researchCandidates.phone, ""))),
   ]);
 
-  const knownCompanies = new Set([
-    ...leadCompanyRows.map((row) => row.normalizedCompany),
-    ...candidateCompanyRows.map((row) => row.normalizedCompany),
-  ]);
-  const knownDomains = new Set([
-    ...leadDomainRows.map((row) => row.domain).filter(Boolean),
-    ...candidateDomainRows.map((row) => row.domain).filter(Boolean),
-  ]);
+  const knownCompanies = new Set([...leadCompanyRows.map((row) => row.normalizedCompany), ...candidateCompanyRows.map((row) => row.normalizedCompany)]);
+  const knownDomains = new Set([...leadDomainRows.map((row) => row.domain).filter(Boolean), ...candidateDomainRows.map((row) => row.domain).filter(Boolean)]);
+  const knownPhones = new Set([...leadPhoneRows, ...candidatePhoneRows]
+    .map((row) => validateResearchContacts({ phone: row.phone, email: "", instagramUrl: "", websiteUrl: "" }).phone.normalized).filter(Boolean));
 
-  const fresh = discovered.filter((item) => {
+  const fresh: DiscoveredCandidate[] = [];
+  const freshPhones = new Set<string>();
+  for (const item of discovered) {
     const company = normalizeCompany(item.company);
     const domain = domainFromUrl(item.websiteUrl);
-    return Boolean(company) && !knownCompanies.has(company) && (!domain || !knownDomains.has(domain));
-  });
+    const phone = validateCandidate(item).phone.normalized;
+    if (!company || knownCompanies.has(company) || (domain && knownDomains.has(domain)) || (phone && (knownPhones.has(phone) || freshPhones.has(phone)))) continue;
+    fresh.push(item);
+    if (phone) freshPhones.add(phone);
+  }
+
+  const enrichment = await enrichCandidates(fresh);
+  const evaluated = fresh.map((item) => {
+    const validation = validateCandidate(item);
+    const score = scoreCandidate(item);
+    return { item, score, callReady: isCallReady(validation, score) };
+  }).sort((a, b) => b.score - a.score || b.item.reviewCount - a.item.reviewCount);
+
+  const rowsToInsert = [
+    ...evaluated.filter((row) => row.callReady).slice(0, needed),
+    ...evaluated.filter((row) => !row.callReady).slice(0, 30),
+  ];
 
   let inserted = 0;
-  if (fresh.length) {
-    const rows = await db.insert(researchCandidates).values(fresh.map((item) => {
-      const score = scoreCandidate(item);
+  let callReady = 0;
+  if (rowsToInsert.length) {
+    const rows = await db.insert(researchCandidates).values(rowsToInsert.map(({ item, score, callReady }) => {
       const websiteUrl = normalizeWebsite(item.websiteUrl);
       return {
         workspaceId,
@@ -426,25 +506,22 @@ export async function runResearchFeed(workspaceId: string, override?: Partial<Re
         ratingX10: item.ratingX10,
         reviewCount: item.reviewCount,
         score,
-        status: "new",
+        status: callReady ? "call_ready" : "new",
         reason: reasonFor(item, score),
         raw: item.raw,
         discoveredAt: new Date(),
       };
-    })).onConflictDoNothing().returning({ id: researchCandidates.id });
+    })).onConflictDoNothing().returning({ id: researchCandidates.id, status: researchCandidates.status });
     inserted = rows.length;
+    callReady = rows.filter((row) => row.status === "call_ready").length;
   }
 
-  const duplicateCount = Math.max(0, discovered.length - inserted);
-  return {
-    ok: true,
-    configured: true,
-    discovered: discovered.length,
-    inserted,
-    duplicates: duplicateCount,
-    source: googleUsed ? "google_places+web" : "web_search",
-    config,
-  };
+  const duplicateCount = Math.max(0, discovered.length - fresh.length);
+  const readyAfter = readyBefore + callReady;
+  const source = googleUsed ? "google_places+web" : "web_search";
+  const summary: ResearchRunSummary = { finishedAt: new Date().toISOString(), source, target: config.target, readyBefore, readyAdded: callReady, readyAfter, discovered: discovered.length, inserted, duplicates: duplicateCount, enriched: enrichment.enriched };
+  await saveResearchRunSummary(workspaceId, summary);
+  return { ok: true, configured: true, discovered: discovered.length, inserted, duplicates: duplicateCount, callReady, readyBefore, readyAfter, enriched: enrichment.enriched, enrichmentFailed: enrichment.failed, source, config };
 }
 
 export async function listResearchCandidates(workspaceId: string, status = "new", limit = 200) {
@@ -456,7 +533,7 @@ export async function listResearchCandidates(workspaceId: string, status = "new"
     .limit(Math.max(1, Math.min(limit, 250)));
 }
 
-export async function setResearchCandidateStatus(workspaceId: string, ids: string[], status: "new" | "shortlisted" | "dismissed" | "imported") {
+export async function setResearchCandidateStatus(workspaceId: string, ids: string[], status: "new" | "call_ready" | "shortlisted" | "dismissed" | "imported") {
   const unique = [...new Set(ids)].slice(0, 100);
   if (!unique.length) return 0;
   const rows = await getDb()
@@ -476,7 +553,7 @@ export async function researchCandidatesForIntake(workspaceId: string, ids: stri
     .where(and(
       eq(researchCandidates.workspaceId, workspaceId),
       inArray(researchCandidates.id, unique),
-      or(eq(researchCandidates.status, "new"), eq(researchCandidates.status, "shortlisted")),
+      or(eq(researchCandidates.status, "new"), eq(researchCandidates.status, "call_ready"), eq(researchCandidates.status, "shortlisted")),
     ));
   return rows.map((row) => ({
     company: row.company,
@@ -518,10 +595,36 @@ export async function markResearchCandidatesImported(
       .where(and(
         eq(researchCandidates.workspaceId, workspaceId),
         eq(researchCandidates.id, candidateId),
-        or(eq(researchCandidates.status, "new"), eq(researchCandidates.status, "shortlisted")),
+        or(eq(researchCandidates.status, "new"), eq(researchCandidates.status, "call_ready"), eq(researchCandidates.status, "shortlisted")),
       ))
       .returning({ id: researchCandidates.id });
     updated += rows.length;
+  }
+  return updated;
+}
+
+export async function restoreResearchCandidates(workspaceId: string, ids: string[]) {
+  const unique = [...new Set(ids)].slice(0, 100);
+  if (!unique.length) return 0;
+  const db = getDb();
+  const rows = await db.select({ id: researchCandidates.id, raw: researchCandidates.raw }).from(researchCandidates)
+    .where(and(eq(researchCandidates.workspaceId, workspaceId), inArray(researchCandidates.id, unique), eq(researchCandidates.status, "dismissed")));
+  const ready = rows.filter((row) => {
+    const value = row.raw?.contactValidation;
+    return Boolean(value && typeof value === "object" && !Array.isArray(value) && (value as { phone?: { valid?: boolean } }).phone?.valid);
+  }).map((row) => row.id);
+  const readySet = new Set(ready);
+  const review = rows.filter((row) => !readySet.has(row.id)).map((row) => row.id);
+  let updated = 0;
+  if (ready.length) {
+    const changed = await db.update(researchCandidates).set({ status: "call_ready", reviewedAt: new Date(), updatedAt: new Date() })
+      .where(and(eq(researchCandidates.workspaceId, workspaceId), inArray(researchCandidates.id, ready), eq(researchCandidates.status, "dismissed"))).returning({ id: researchCandidates.id });
+    updated += changed.length;
+  }
+  if (review.length) {
+    const changed = await db.update(researchCandidates).set({ status: "new", reviewedAt: new Date(), updatedAt: new Date() })
+      .where(and(eq(researchCandidates.workspaceId, workspaceId), inArray(researchCandidates.id, review), eq(researchCandidates.status, "dismissed"))).returning({ id: researchCandidates.id });
+    updated += changed.length;
   }
   return updated;
 }

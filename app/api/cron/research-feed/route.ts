@@ -33,7 +33,7 @@ export async function GET(request: Request) {
   for (const item of enabled) {
     try {
       const result = await runResearchFeed(item.workspaceId, item.config);
-      results.push({ workspaceId: item.workspaceId, ok: true, inserted: result.inserted, discovered: result.discovered });
+      results.push({ workspaceId: item.workspaceId, ok: true, inserted: result.inserted, discovered: result.discovered, callReady: result.callReady, readyAfter: result.readyAfter, target: result.config.target });
     } catch (error) {
       results.push({
         workspaceId: item.workspaceId,
