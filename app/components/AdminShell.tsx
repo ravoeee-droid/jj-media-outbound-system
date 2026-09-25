@@ -5,13 +5,14 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import styles from "./AdminShell.module.css";
 import { ROLE_LABELS, hasPermission, normalizedRole, type TeamPermission } from "@/lib/team";
 
-type IconName = "home" | "crm" | "intake" | "research" | "send" | "spark" | "plug" | "pulse" | "chat" | "mail" | "team";
-type NavKey = "overview" | "crm" | "intake" | "research" | "outbound" | "email" | "whatsapp" | "intelligence" | "team" | "integrations" | "system";
+type IconName = "home" | "crm" | "queue" | "intake" | "research" | "send" | "spark" | "plug" | "pulse" | "chat" | "mail" | "team";
+type NavKey = "overview" | "crm" | "queue" | "intake" | "research" | "outbound" | "email" | "whatsapp" | "intelligence" | "team" | "integrations" | "system";
 type NavItem = { key: NavKey; label: string; hint: string; href: string; icon: IconName; permission?: TeamPermission };
 
 const navigation: readonly NavItem[] = [
   { key: "overview", label: "Übersicht", hint: "Command Center", href: "/dashboard", icon: "home" },
   { key: "crm", label: "CRM", hint: "Meine & Team-Leads", href: "/dashboard/crm", icon: "crm", permission: "view_own_leads" },
+  { key: "queue", label: "Tages-Queue", hint: "Anrufen & weiter", href: "/dashboard/queue", icon: "queue", permission: "manage_leads" },
   { key: "intake", label: "Lead Intake", hint: "Prüfen & übernehmen", href: "/dashboard/intake", icon: "intake", permission: "manage_leads" },
   { key: "research", label: "Recherche", hint: "Täglicher Lead Feed", href: "/dashboard/research", icon: "research", permission: "manage_leads" },
   { key: "outbound", label: "Outbound", hint: "Leads & Videos", href: "/dashboard/outbound", icon: "send", permission: "view_own_leads" },
@@ -27,6 +28,7 @@ function Icon({ name }: { name: IconName }) {
   const common = { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, "aria-hidden": true };
   if (name === "home") return <svg {...common}><path d="M3.5 10.5 12 3.7l8.5 6.8"/><path d="M5.8 9.2v10.2h12.4V9.2"/><path d="M9.6 19.4v-6h4.8v6"/></svg>;
   if (name === "crm") return <svg {...common}><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 8h8M8 12h5M8 16h7"/></svg>;
+  if (name === "queue") return <svg {...common}><path d="M5 4h14v4H5zM5 10h14v4H5zM5 16h9v4H5z"/><path d="m17 17 2 2 3-4"/></svg>;
   if (name === "intake") return <svg {...common}><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 19h14"/></svg>;
   if (name === "research") return <svg {...common}><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/><path d="M8 11h6M11 8v6"/></svg>;
   if (name === "send") return <svg {...common}><path d="m4 4 16 7.2-7 2.1-2.2 6.7L4 4Z"/><path d="m11 13 4.8-4.8"/></svg>;
