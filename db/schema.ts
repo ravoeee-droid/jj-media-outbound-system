@@ -324,7 +324,10 @@ export const jobs = pgTable(
     createdAt,
     updatedAt,
   },
-  (table) => [index("jobs_queue_idx").on(table.status, table.scheduledAt)],
+  (table) => [
+    index("jobs_queue_idx").on(table.status, table.scheduledAt),
+    index("jobs_workspace_type_idx").on(table.workspaceId, table.type, table.status, table.leadId),
+  ],
 );
 
 export type Lead = typeof leads.$inferSelect;

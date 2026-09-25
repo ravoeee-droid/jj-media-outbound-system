@@ -152,6 +152,7 @@ export async function GET(request: Request) {
       permissions: {
         canViewAll,
         canManageLeads: hasPermission(workspace.role, workspace.permissions, "manage_leads"),
+        canGenerateVideo: hasPermission(workspace.role, workspace.permissions, "generate_video"),
       },
       tabs: {
         total,

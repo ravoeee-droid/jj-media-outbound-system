@@ -38,8 +38,21 @@ type CrmPayload = {
   scope: string;
   query: string;
   currentUser: { id: string; name: string | null; email: string | null; role: string };
-  permissions: { canViewAll: boolean; canManageLeads: boolean };
+  permissions: { canViewAll: boolean; canManageLeads: boolean; canGenerateVideo: boolean };
   tabs: { total: number; unassigned: number; members: MemberTab[] };
+  error?: string;
+};
+
+type BulkOperation = "assign_owner" | "enrich" | "validate" | "analyze" | "prepare_media";
+type BulkDecision = { leadId: string; company: string; eligible: boolean; reason: string };
+type BulkPreview = {
+  operation: BulkOperation;
+  label: string;
+  selected: number;
+  eligible: number;
+  skipped: number;
+  decisions: BulkDecision[];
+  execution: { chunkSize: number; heavy: boolean };
   error?: string;
 };
 
@@ -59,6 +72,7 @@ const actionLabel: Record<string, string> = {
   enrich: "Enrichen",
   validate: "Validieren",
   analyze: "Analysieren",
+  screenshot: "Screenshot",
   call: "Anrufen",
   callback: "Rückruf",
   send_info: "Info senden",
@@ -86,6 +100,12 @@ function channelState(value: string) {
   return "idle";
 }
 
+function chunks<T>(items: T[], size: number) {
+  const result: T[][] = [];
+  for (let index = 0; index < items.length; index += size) result.push(items.slice(index, index + size));
+  return result;
+}
+
 export default function CrmWorkspace() {
   const [activeScope, setActiveScope] = useState("mine");
   const [query, setQuery] = useState("");
@@ -97,7 +117,13 @@ export default function CrmWorkspace() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [savingOwnerId, setSavingOwnerId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkPreview, setBulkPreview] = useState<BulkPreview | null>(null);
+  const [bulkOwnerChoice, setBulkOwnerChoice] = useState("__choose__");
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState({ done: 0, total: 0, succeeded: 0, failed: 0 });
   const requestRef = useRef<AbortController | null>(null);
   const requestSequence = useRef(0);
   const cacheRef = useRef(new Map<string, { data: CrmPayload; leads: CrmLead[]; page: CrmPayload["page"] }>());
@@ -127,6 +153,7 @@ export default function CrmWorkspace() {
 
     if (!silent) append ? setLoadingMore(true) : setLoading(true);
     setError("");
+    setNotice("");
 
     const params = new URLSearchParams({ scope });
     if (search.length >= 2) params.set("q", search);
@@ -171,6 +198,12 @@ export default function CrmWorkspace() {
     void fetchLeads({ scope: activeScope, search: debouncedQuery });
   }, [activeScope, debouncedQuery, fetchLeads]);
 
+  useEffect(() => {
+    setSelectedIds(new Set());
+    setBulkPreview(null);
+    setBulkOwnerChoice("__choose__");
+  }, [activeScope, debouncedQuery]);
+
   useEffect(() => () => requestRef.current?.abort(), []);
 
   const tabs = useMemo(() => {
@@ -189,6 +222,10 @@ export default function CrmWorkspace() {
     }
     return items;
   }, [data]);
+
+  const selectedList = useMemo(() => [...selectedIds], [selectedIds]);
+  const selectableVisibleIds = useMemo(() => leads.map((lead) => lead.id).slice(0, 30), [leads]);
+  const allVisibleSelected = selectableVisibleIds.length > 0 && selectableVisibleIds.every((id) => selectedIds.has(id));
 
   async function changeOwner(lead: CrmLead, ownerId: string) {
     if (!data?.permissions.canManageLeads || !data.permissions.canViewAll || savingOwnerId) return;
@@ -221,6 +258,132 @@ export default function CrmWorkspace() {
       updatedAt: String(updated.updatedAt ?? lead.updatedAt),
     } : lead));
     cacheRef.current.clear();
+  }
+
+  function toggleLeadSelection(leadId: string) {
+    if (bulkBusy) return;
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(leadId)) {
+        next.delete(leadId);
+        return next;
+      }
+      if (next.size >= 30) {
+        setError("Im Power-Modus können maximal 30 Leads gleichzeitig ausgewählt werden.");
+        return current;
+      }
+      next.add(leadId);
+      return next;
+    });
+    setBulkPreview(null);
+  }
+
+  function toggleVisibleSelection() {
+    if (bulkBusy) return;
+    if (allVisibleSelected) {
+      setSelectedIds((current) => {
+        const next = new Set(current);
+        for (const id of selectableVisibleIds) next.delete(id);
+        return next;
+      });
+    } else {
+      setSelectedIds(new Set(selectableVisibleIds));
+    }
+    setBulkPreview(null);
+  }
+
+  function bulkOwnerId() {
+    if (bulkOwnerChoice === "__unassigned__") return null;
+    if (bulkOwnerChoice === "__choose__") return undefined;
+    return bulkOwnerChoice;
+  }
+
+  async function previewBulk(operation: BulkOperation) {
+    if (!selectedList.length || bulkBusy) return;
+    const ownerId = operation === "assign_owner" ? bulkOwnerId() : undefined;
+    if (operation === "assign_owner" && ownerId === undefined) {
+      setError("Bitte zuerst einen Mitarbeiter oder „Unzugeordnet“ auswählen.");
+      return;
+    }
+    setBulkBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/crm/bulk", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ mode: "preview", operation, leadIds: selectedList, ...(operation === "assign_owner" ? { ownerId } : {}) }),
+      });
+      const payload = await response.json() as BulkPreview;
+      if (!response.ok) throw new Error(payload.error || "Vorprüfung fehlgeschlagen.");
+      setBulkPreview(payload);
+      setBulkProgress({ done: 0, total: payload.eligible, succeeded: 0, failed: 0 });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Vorprüfung fehlgeschlagen.");
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  async function executeBulk() {
+    if (!bulkPreview || bulkBusy) return;
+    const eligibleIds = bulkPreview.decisions.filter((item) => item.eligible).map((item) => item.leadId);
+    if (!eligibleIds.length) return;
+
+    const ownerId = bulkPreview.operation === "assign_owner" ? bulkOwnerId() : undefined;
+    const groups = chunks(eligibleIds, Math.max(1, bulkPreview.execution.chunkSize));
+    let succeeded = 0;
+    let failed = 0;
+    let done = 0;
+
+    setBulkBusy(true);
+    setBulkProgress({ done: 0, total: eligibleIds.length, succeeded: 0, failed: 0 });
+    setError("");
+    setNotice("");
+
+    try {
+      for (const leadIds of groups) {
+        const response = await fetch("/api/crm/bulk", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            mode: "execute",
+            operation: bulkPreview.operation,
+            leadIds,
+            ...(bulkPreview.operation === "assign_owner" ? { ownerId } : {}),
+          }),
+        });
+        const result = await response.json() as {
+          succeeded?: number;
+          failed?: number;
+          error?: string;
+        };
+        if (!response.ok) {
+          failed += leadIds.length;
+          done += leadIds.length;
+          setBulkProgress({ done, total: eligibleIds.length, succeeded, failed });
+          throw new Error(result.error || "Bulk-Aktion wurde unterbrochen.");
+        }
+        succeeded += Number(result.succeeded || 0);
+        failed += Number(result.failed || 0);
+        done += leadIds.length;
+        setBulkProgress({ done, total: eligibleIds.length, succeeded, failed });
+      }
+
+      cacheRef.current.clear();
+      await fetchLeads({ scope: activeScope, search: debouncedQuery, silent: true });
+      setSelectedIds(new Set());
+      setBulkPreview(null);
+      setBulkOwnerChoice("__choose__");
+      if (failed) setError(`Power-Modus beendet: ${succeeded} erfolgreich, ${failed} fehlgeschlagen.`);
+      else setNotice(`Power-Modus beendet: ${succeeded} Leads erfolgreich verarbeitet.`);
+    } catch (caught) {
+      cacheRef.current.clear();
+      await fetchLeads({ scope: activeScope, search: debouncedQuery, silent: true }).catch(() => undefined);
+      setError(caught instanceof Error ? caught.message : "Bulk-Aktion wurde unterbrochen.");
+    } finally {
+      setBulkBusy(false);
+    }
   }
 
   async function loadMore() {
@@ -256,12 +419,75 @@ export default function CrmWorkspace() {
 
       <section className={styles.statusBar}>
         <div>
-          <strong>{debouncedQuery ? `Suchergebnisse` : tabs.find((tab) => tab.key === activeScope)?.label || "CRM"}</strong>
+          <strong>{debouncedQuery ? "Suchergebnisse" : tabs.find((tab) => tab.key === activeScope)?.label || "CRM"}</strong>
           <span>{leads.length}{page?.hasMore ? "+" : ""} sichtbar · maximal {page?.limit || 50} pro Abruf</span>
         </div>
         <div className={styles.performance}><i /> Leichtgewichtige CRM-Ansicht</div>
       </section>
 
+      {data?.permissions.canManageLeads && selectedIds.size > 0 && (
+        <section className={styles.bulkBar}>
+          <div className={styles.bulkCount}>
+            <strong>{selectedIds.size}</strong>
+            <span>Leads ausgewählt</span>
+            <button type="button" disabled={bulkBusy} onClick={() => { setSelectedIds(new Set()); setBulkPreview(null); }}>Auswahl löschen</button>
+          </div>
+          <div className={styles.bulkActions}>
+            <button type="button" disabled={bulkBusy} onClick={() => void previewBulk("enrich")}>⌕ Enrichen</button>
+            <button type="button" disabled={bulkBusy} onClick={() => void previewBulk("validate")}>✓ Validieren</button>
+            <button type="button" disabled={bulkBusy} onClick={() => void previewBulk("analyze")}>◇ Analysieren</button>
+            {data.permissions.canGenerateVideo && <button type="button" disabled={bulkBusy} onClick={() => void previewBulk("prepare_media")}>▣ Screenshots</button>}
+          </div>
+          {data.permissions.canViewAll && (
+            <div className={styles.bulkOwner}>
+              <select value={bulkOwnerChoice} disabled={bulkBusy} onChange={(event) => { setBulkOwnerChoice(event.target.value); setBulkPreview(null); }}>
+                <option value="__choose__">Owner wählen …</option>
+                <option value="__unassigned__">Unzugeordnet</option>
+                {ownerOptions.map((owner) => <option value={owner.userId} key={owner.userId}>{owner.name}</option>)}
+              </select>
+              <button type="button" disabled={bulkBusy || bulkOwnerChoice === "__choose__"} onClick={() => void previewBulk("assign_owner")}>Zuweisen</button>
+            </div>
+          )}
+        </section>
+      )}
+
+      {bulkPreview && (
+        <section className={styles.bulkPreview}>
+          <div className={styles.bulkPreviewHead}>
+            <div>
+              <small>POWER-MODUS · VORPRÜFUNG</small>
+              <h3>{bulkPreview.label}</h3>
+              <p><strong>{bulkPreview.eligible}</strong> geeignet · <strong>{bulkPreview.skipped}</strong> werden sicher übersprungen</p>
+            </div>
+            <button type="button" disabled={bulkBusy} onClick={() => setBulkPreview(null)}>×</button>
+          </div>
+
+          <div className={styles.bulkDecisionList}>
+            {bulkPreview.decisions.map((item) => (
+              <div key={item.leadId} data-eligible={item.eligible ? "yes" : "no"}>
+                <span>{item.eligible ? "✓" : "—"}</span>
+                <div><strong>{item.company}</strong><small>{item.reason}</small></div>
+              </div>
+            ))}
+          </div>
+
+          {bulkBusy && bulkProgress.total > 0 && (
+            <div className={styles.bulkProgress}>
+              <div><span style={{ width: `${Math.round((bulkProgress.done / bulkProgress.total) * 100)}%` }} /></div>
+              <small>{bulkProgress.done}/{bulkProgress.total} verarbeitet · {bulkProgress.succeeded} erfolgreich · {bulkProgress.failed} Fehler</small>
+            </div>
+          )}
+
+          <div className={styles.bulkPreviewActions}>
+            <button type="button" disabled={bulkBusy} onClick={() => setBulkPreview(null)}>Abbrechen</button>
+            <button type="button" className={styles.bulkExecute} disabled={bulkBusy || bulkPreview.eligible === 0} onClick={() => void executeBulk()}>
+              {bulkBusy ? "Wird verarbeitet …" : `${bulkPreview.eligible} Leads ausführen`}
+            </button>
+          </div>
+        </section>
+      )}
+
+      {notice && <div className={styles.notice}>{notice}</div>}
       {error && <div className={styles.error}>{error}</div>}
 
       <section className={styles.tableCard}>
@@ -269,6 +495,17 @@ export default function CrmWorkspace() {
           <table>
             <thead>
               <tr>
+                {data?.permissions.canManageLeads && (
+                  <th className={styles.selectColumn}>
+                    <input
+                      type="checkbox"
+                      aria-label="Bis zu 30 sichtbare Leads auswählen"
+                      checked={allVisibleSelected}
+                      onChange={toggleVisibleSelection}
+                      disabled={!leads.length || bulkBusy}
+                    />
+                  </th>
+                )}
                 <th>Unternehmen</th>
                 <th>Kontakt</th>
                 <th>Status</th>
@@ -281,9 +518,20 @@ export default function CrmWorkspace() {
             </thead>
             <tbody>
               {loading && leads.length === 0 ? (
-                Array.from({ length: 8 }).map((_, index) => <SkeletonRow key={index} />)
+                Array.from({ length: 8 }).map((_, index) => <SkeletonRow key={index} selectable={Boolean(data?.permissions.canManageLeads)} />)
               ) : leads.length ? leads.map((lead) => (
                 <tr key={lead.id} className={lead.contactLocked ? styles.lockedRow : undefined}>
+                  {data?.permissions.canManageLeads && (
+                    <td className={styles.selectColumn}>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(lead.id)}
+                        onChange={() => toggleLeadSelection(lead.id)}
+                        disabled={bulkBusy}
+                        aria-label={`${lead.company} auswählen`}
+                      />
+                    </td>
+                  )}
                   <td>
                     <button className={styles.companyButton} onClick={() => setSelectedLeadId(lead.id)}>
                       <span className={styles.companyMark}>{initials(lead.company)}</span>
@@ -313,7 +561,7 @@ export default function CrmWorkspace() {
                       <select
                         className={styles.ownerSelect}
                         value={lead.ownerId || ""}
-                        disabled={savingOwnerId === lead.id}
+                        disabled={savingOwnerId === lead.id || bulkBusy}
                         onChange={(event) => void changeOwner(lead, event.target.value)}
                         aria-label={`Owner für ${lead.company}`}
                       >
@@ -326,7 +574,7 @@ export default function CrmWorkspace() {
                   <td><span className={styles.updated}>{formatDate(lead.updatedAt)}</span></td>
                 </tr>
               )) : (
-                <tr><td colSpan={8}><div className={styles.empty}>{debouncedQuery ? "Keine passenden Leads gefunden." : "In diesem CRM-Bereich liegen noch keine Leads."}</div></td></tr>
+                <tr><td colSpan={data?.permissions.canManageLeads ? 9 : 8}><div className={styles.empty}>{debouncedQuery ? "Keine passenden Leads gefunden." : "In diesem CRM-Bereich liegen noch keine Leads."}</div></td></tr>
               )}
             </tbody>
           </table>
@@ -334,7 +582,7 @@ export default function CrmWorkspace() {
 
         {page?.hasMore && (
           <div className={styles.loadMore}>
-            <button type="button" onClick={() => void loadMore()} disabled={loadingMore}>{loadingMore ? "Weitere Leads werden geladen …" : "Weitere 50 Leads laden"}</button>
+            <button type="button" onClick={() => void loadMore()} disabled={loadingMore || bulkBusy}>{loadingMore ? "Weitere Leads werden geladen …" : "Weitere 50 Leads laden"}</button>
           </div>
         )}
       </section>
@@ -350,9 +598,10 @@ export default function CrmWorkspace() {
   );
 }
 
-function SkeletonRow() {
+function SkeletonRow({ selectable }: { selectable: boolean }) {
   return (
     <tr className={styles.skeletonRow}>
+      {selectable && <td className={styles.selectColumn}><span /></td>}
       {Array.from({ length: 8 }).map((_, index) => <td key={index}><span /></td>)}
     </tr>
   );
