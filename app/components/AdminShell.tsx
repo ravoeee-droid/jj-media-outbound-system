@@ -1,8 +1,9 @@
+"use client";
+
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import styles from "./AdminShell.module.css";
 import { ROLE_LABELS, hasPermission, normalizedRole, type TeamPermission } from "@/lib/team";
-import { requireWorkspace } from "@/lib/workspace";
 
 type IconName = "home" | "send" | "spark" | "plug" | "pulse" | "chat" | "mail" | "team";
 type NavKey = "overview" | "outbound" | "email" | "whatsapp" | "intelligence" | "team" | "integrations" | "system";
@@ -31,7 +32,7 @@ function Icon({ name }: { name: IconName }) {
   return <svg {...common}><path d="M3 12h4l2-6 4 12 2-6h6"/></svg>;
 }
 
-export default async function AdminShell({
+export default function AdminShell({
   active,
   eyebrow,
   title,
@@ -49,10 +50,27 @@ export default async function AdminShell({
   wide?: boolean;
 }) {
   const publicSiteUrl = process.env.NEXT_PUBLIC_SITE_URL || "/";
-  const workspace = await requireWorkspace();
-  const role = normalizedRole(workspace.role);
-  const visibleNavigation = navigation.filter((item) => !item.permission || hasPermission(role, workspace.permissions, item.permission));
-  const displayName = workspace.user.name || workspace.user.email || "JJ-Media";
+  const [identity, setIdentity] = useState<{ name: string | null; email: string | null; role: string; permissions: string[] } | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/me", { cache: "no-store" })
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error("Session unavailable")))
+      .then((payload: { user?: { name: string | null; email: string | null; role: string; permissions: string[] } }) => {
+        if (active && payload.user) setIdentity(payload.user);
+      })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, []);
+
+  const role = normalizedRole(identity?.role || "viewer");
+  const visibleNavigation = useMemo(
+    () => identity
+      ? navigation.filter((item) => !item.permission || hasPermission(role, identity.permissions, item.permission))
+      : navigation.filter((item) => item.key === "overview"),
+    [identity, role],
+  );
+  const displayName = identity?.name || identity?.email || "JJ-Media Team";
   const initials = displayName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "JJ";
 
   return (
@@ -87,7 +105,7 @@ export default async function AdminShell({
         <div className={styles.sidebarBottom}>
           <div className={styles.ownerCard}>
             <span className={styles.avatar}>{initials}</span>
-            <div><strong>{displayName}</strong><small>{ROLE_LABELS[role]}</small></div>
+            <div><strong>{displayName}</strong><small>{identity ? ROLE_LABELS[role] : "Team"}</small></div>
           </div>
           <a href={publicSiteUrl} className={styles.siteLink}>Website ansehen <span>↗</span></a>
         </div>
