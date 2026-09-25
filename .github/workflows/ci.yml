@@ -25,10 +25,9 @@ jobs:
         run: npm run typecheck
       - name: Lint
         run: npm run lint
-      - name: Check WhatsApp laptop scripts
-        run: |
-          node --check services/whatsapp-bridge/server.mjs
-          node --check services/whatsapp-bridge/setup.mjs
-          node --check services/whatsapp-bridge/history-sync.mjs
+      - name: WhatsApp safety tests
+        run: npm run test:whatsapp
+      - name: Check WhatsApp history sync script
+        run: node --check services/whatsapp-bridge/history-sync.mjs
       - name: Production build
         run: npm run build
