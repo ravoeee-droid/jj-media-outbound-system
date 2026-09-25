@@ -78,6 +78,11 @@ export async function POST(request: Request) {
       .where(and(eq(outreach.leadId, lead.id), eq(outreach.step, input.step)))
       .limit(1);
     if (existing?.status === "sent") {
+      if (input.step === 1) {
+        await db.update(tasks).set({ status: "done", updatedAt: new Date() })
+          .where(and(eq(tasks.workspaceId, workspace.workspaceId), eq(tasks.leadId, lead.id), eq(tasks.type, "send_info"), eq(tasks.status, "open")))
+          .catch(() => undefined);
+      }
       return Response.json({
         ok: true,
         status: "sent",
