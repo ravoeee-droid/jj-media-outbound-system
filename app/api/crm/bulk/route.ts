@@ -1,7 +1,7 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db";
-import { activities, jobs, leads, users, workspaceMembers } from "@/db/schema";
+import { activities, leads, users, workspaceMembers } from "@/db/schema";
 import { analyzeLead, validateLead } from "@/lib/lead-workflow";
 import { enrichLeadManually } from "@/lib/manual-lead-enrichment";
 import { hasPermission } from "@/lib/team";
@@ -189,7 +189,7 @@ export async function POST(request: Request) {
         skipped: decisions.length - eligibleIds.length,
         decisions,
         execution: {
-          chunkSize: input.operation === "enrich" ? 5 : 10,
+          chunkSize: input.operation === "prepare_media" ? 1 : input.operation === "enrich" ? 5 : 10,
           heavy: input.operation === "enrich" || input.operation === "prepare_media",
         },
       });
@@ -224,49 +224,10 @@ export async function POST(request: Request) {
     }
 
     if (input.operation === "prepare_media") {
-      const existingJobs = await db
-        .select({ leadId: jobs.leadId })
-        .from(jobs)
-        .where(and(
-          eq(jobs.workspaceId, workspace.workspaceId),
-          eq(jobs.type, "profile_capture_prepare"),
-          inArray(jobs.leadId, eligibleIds),
-          inArray(jobs.status, ["queued", "running"]),
-        ));
-      const queued = new Set(existingJobs.map((job) => job.leadId).filter(Boolean));
-      const toQueue = eligibleIds.filter((leadId) => !queued.has(leadId));
-
-      if (toQueue.length) {
-        await Promise.all([
-          db.insert(jobs).values(toQueue.map((leadId) => ({
-            workspaceId: workspace.workspaceId,
-            leadId,
-            type: "profile_capture_prepare",
-            status: "queued",
-            attempts: 0,
-            progress: 0,
-          }))),
-          db.update(leads)
-            .set({ videoStatus: "queued", nextAction: "screenshot", updatedAt: new Date() })
-            .where(and(eq(leads.workspaceId, workspace.workspaceId), inArray(leads.id, toQueue))),
-          db.insert(activities).values(toQueue.map((leadId) => ({
-            workspaceId: workspace.workspaceId,
-            leadId,
-            userId: workspace.user.id,
-            type: "profile_capture_queued",
-            title: "Instagram-Screenshot vorbereitet",
-            detail: "Der Lead wurde in die Medien-Queue gelegt.",
-          }))),
-        ]);
-      }
-
-      return Response.json({
-        operation: input.operation,
-        processed: eligibleIds.length,
-        succeeded: eligibleIds.length,
-        failed: 0,
-        results: eligibleIds.map((leadId) => ({ leadId, ok: true, alreadyQueued: queued.has(leadId) })),
-      });
+      return Response.json(
+        { error: "Medien-Captures werden absichtlich einzeln über den dedizierten Capture-Endpunkt ausgeführt." },
+        { status: 409 },
+      );
     }
 
     const results = await processWithConcurrency(eligibleIds, input.operation === "enrich" ? 2 : 5, async (leadId) => {

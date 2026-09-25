@@ -326,7 +326,6 @@ export const jobs = pgTable(
   },
   (table) => [
     index("jobs_queue_idx").on(table.status, table.scheduledAt),
-    index("jobs_workspace_type_idx").on(table.workspaceId, table.type, table.status, table.leadId),
   ],
 );
 

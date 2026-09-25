@@ -29,13 +29,6 @@
       "when": 1790328000000,
       "tag": "0003_crm_performance",
       "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1790329300000,
-      "tag": "0004_bulk_power_mode",
-      "breakpoints": true
     }
   ]
 }

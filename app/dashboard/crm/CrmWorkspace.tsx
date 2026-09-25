@@ -342,32 +342,49 @@ export default function CrmWorkspace() {
     setNotice("");
 
     try {
-      for (const leadIds of groups) {
-        const response = await fetch("/api/crm/bulk", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            mode: "execute",
-            operation: bulkPreview.operation,
-            leadIds,
-            ...(bulkPreview.operation === "assign_owner" ? { ownerId } : {}),
-          }),
-        });
-        const result = await response.json() as {
-          succeeded?: number;
-          failed?: number;
-          error?: string;
-        };
-        if (!response.ok) {
-          failed += leadIds.length;
+      if (bulkPreview.operation === "prepare_media") {
+        // Browser captures are deliberately serialized. Each request owns one browser
+        // session, so we never fan out Chromium instances and overload the runtime.
+        for (const leadId of eligibleIds) {
+          const response = await fetch(`/api/leads/${leadId}/capture-profile`, { method: "POST" });
+          const result = await response.json() as { error?: string };
+          if (response.ok) succeeded += 1;
+          else failed += 1;
+          done += 1;
+          setBulkProgress({ done, total: eligibleIds.length, succeeded, failed });
+
+          if (!response.ok && result.error) {
+            setError(`Screenshot bei einem Lead fehlgeschlagen: ${result.error}`);
+          }
+        }
+      } else {
+        for (const leadIds of groups) {
+          const response = await fetch("/api/crm/bulk", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              mode: "execute",
+              operation: bulkPreview.operation,
+              leadIds,
+              ...(bulkPreview.operation === "assign_owner" ? { ownerId } : {}),
+            }),
+          });
+          const result = await response.json() as {
+            succeeded?: number;
+            failed?: number;
+            error?: string;
+          };
+          if (!response.ok) {
+            failed += leadIds.length;
+            done += leadIds.length;
+            setBulkProgress({ done, total: eligibleIds.length, succeeded, failed });
+            throw new Error(result.error || "Bulk-Aktion wurde unterbrochen.");
+          }
+          succeeded += Number(result.succeeded || 0);
+          failed += Number(result.failed || 0);
           done += leadIds.length;
           setBulkProgress({ done, total: eligibleIds.length, succeeded, failed });
-          throw new Error(result.error || "Bulk-Aktion wurde unterbrochen.");
         }
-        succeeded += Number(result.succeeded || 0);
-        failed += Number(result.failed || 0);
-        done += leadIds.length;
-        setBulkProgress({ done, total: eligibleIds.length, succeeded, failed });
       }
 
       cacheRef.current.clear();
