@@ -3,6 +3,7 @@ import { and, eq, gt, inArray, lt } from "drizzle-orm";
 import { getDb } from "@/db";
 import { accounts, activities, bookings, leads, tasks, whatsappReservations, whatsappThreads, type Lead } from "@/db/schema";
 import { getGoogleAccessToken } from "@/lib/google";
+import { cancelPendingEmailFollowups } from "@/lib/outreach-lifecycle";
 import { getAgentConfig, withLease } from "./config";
 import { bookingSlotIsCurrent, effectiveMode, isSuppressed, type AgentConfig, type CalendarSlot } from "./policy";
 import { requireSecureAccess } from "./access";
@@ -173,7 +174,10 @@ export async function bookSlot(args: { userId: string; workspaceId: string; thre
     }
     await db.update(tasks).set({ status: "cancelled", updatedAt: new Date() }).where(and(eq(tasks.workspaceId, workspaceId), eq(tasks.leadId, lead.id), eq(tasks.type, "whatsapp_followup"), eq(tasks.status, "open")));
     await db.update(leads).set({ pipelineStage: "call_booked", probability: Math.max(lead.probability, 60), nextFollowUpAt: null, lastActivityAt: new Date(), updatedAt: new Date() }).where(and(eq(leads.id, lead.id), eq(leads.workspaceId, workspaceId)));
-    await db.update(whatsappThreads).set({ status: "booked", intent: "booking", offeredSlots: [], operatorSlots: [], nextFollowUpAt: null, updatedAt: new Date() }).where(and(eq(whatsappThreads.id, threadId), eq(whatsappThreads.workspaceId, workspaceId), eq(whatsappThreads.version, args.expectedVersion), eq(whatsappThreads.consent, "granted")));
+    await Promise.all([
+      db.update(whatsappThreads).set({ status: "booked", intent: "booking", offeredSlots: [], operatorSlots: [], nextFollowUpAt: null, updatedAt: new Date() }).where(and(eq(whatsappThreads.id, threadId), eq(whatsappThreads.workspaceId, workspaceId), eq(whatsappThreads.version, args.expectedVersion), eq(whatsappThreads.consent, "granted"))),
+      cancelPendingEmailFollowups({ workspaceId, leadId: lead.id, reason: "Google-Meet-Termin über WhatsApp gebucht." }),
+    ]);
     return { eventId, start: slot.start, label: slot.label, joinUrl };
   });
 }
