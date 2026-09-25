@@ -12,7 +12,7 @@ if (!dbUrl) throw new Error("SUPABASE_DB_URL is unavailable");
 
 const allowedTables = new Set([
   "accounts", "activities", "assets", "authenticators", "bookings", "campaigns",
-  "events", "jobs", "leads", "outreach", "sessions", "settings", "tasks", "users",
+  "events", "jobs", "leads", "outreach", "research_candidates", "sessions", "settings", "tasks", "users",
   "verification_tokens", "workspace_members", "workspaces",
   "jj_whatsapp_threads", "jj_whatsapp_messages", "jj_whatsapp_locks",
   "jj_whatsapp_queue", "jj_whatsapp_reservations"

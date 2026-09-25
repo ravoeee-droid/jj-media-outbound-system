@@ -193,6 +193,44 @@ export const leads = pgTable(
   ],
 );
 
+export const researchCandidates = pgTable(
+  "research_candidates",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    importedLeadId: uuid("imported_lead_id").references(() => leads.id, { onDelete: "set null" }),
+    source: text("source").notNull().default("web"),
+    sourceQuery: text("source_query").notNull().default(""),
+    externalId: text("external_id").notNull().default(""),
+    company: text("company").notNull(),
+    normalizedCompany: text("normalized_company").notNull(),
+    websiteUrl: text("website_url").notNull().default(""),
+    domain: text("domain").notNull().default(""),
+    phone: text("phone").notNull().default(""),
+    email: text("email").notNull().default(""),
+    city: text("city").notNull().default(""),
+    region: text("region").notNull().default(""),
+    category: text("category").notNull().default("other"),
+    ratingX10: integer("rating_x10").notNull().default(0),
+    reviewCount: integer("review_count").notNull().default(0),
+    score: integer("score").notNull().default(0),
+    status: text("status").notNull().default("new"),
+    reason: text("reason").notNull().default(""),
+    raw: jsonb("raw").$type<Record<string, unknown>>().notNull().default({}),
+    discoveredAt: timestamp("discovered_at", { withTimezone: true }).defaultNow().notNull(),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [
+    uniqueIndex("research_candidates_source_unique").on(table.workspaceId, table.source, table.externalId),
+    index("research_candidates_feed_idx").on(table.workspaceId, table.status, table.score, table.discoveredAt),
+    index("research_candidates_domain_idx").on(table.workspaceId, table.domain),
+    index("research_candidates_company_idx").on(table.workspaceId, table.normalizedCompany),
+    index("research_candidates_imported_lead_idx").on(table.importedLeadId),
+  ],
+);
+
 export const activities = pgTable(
   "activities",
   {

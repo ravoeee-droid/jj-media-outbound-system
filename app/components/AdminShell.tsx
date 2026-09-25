@@ -5,14 +5,15 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import styles from "./AdminShell.module.css";
 import { ROLE_LABELS, hasPermission, normalizedRole, type TeamPermission } from "@/lib/team";
 
-type IconName = "home" | "crm" | "intake" | "send" | "spark" | "plug" | "pulse" | "chat" | "mail" | "team";
-type NavKey = "overview" | "crm" | "intake" | "outbound" | "email" | "whatsapp" | "intelligence" | "team" | "integrations" | "system";
+type IconName = "home" | "crm" | "intake" | "research" | "send" | "spark" | "plug" | "pulse" | "chat" | "mail" | "team";
+type NavKey = "overview" | "crm" | "intake" | "research" | "outbound" | "email" | "whatsapp" | "intelligence" | "team" | "integrations" | "system";
 type NavItem = { key: NavKey; label: string; hint: string; href: string; icon: IconName; permission?: TeamPermission };
 
 const navigation: readonly NavItem[] = [
   { key: "overview", label: "Übersicht", hint: "Command Center", href: "/dashboard", icon: "home" },
   { key: "crm", label: "CRM", hint: "Meine & Team-Leads", href: "/dashboard/crm", icon: "crm", permission: "view_own_leads" },
   { key: "intake", label: "Lead Intake", hint: "Prüfen & übernehmen", href: "/dashboard/intake", icon: "intake", permission: "manage_leads" },
+  { key: "research", label: "Recherche", hint: "Täglicher Lead Feed", href: "/dashboard/research", icon: "research", permission: "manage_leads" },
   { key: "outbound", label: "Outbound", hint: "Leads & Videos", href: "/dashboard/outbound", icon: "send", permission: "view_own_leads" },
   { key: "email", label: "E-Mail", hint: "Inbox & Threads", href: "/dashboard/email", icon: "mail", permission: "send_email" },
   { key: "whatsapp", label: "WhatsApp", hint: "Inbox & KI-Agent", href: "/dashboard/whatsapp", icon: "chat", permission: "use_whatsapp" },
@@ -27,6 +28,7 @@ function Icon({ name }: { name: IconName }) {
   if (name === "home") return <svg {...common}><path d="M3.5 10.5 12 3.7l8.5 6.8"/><path d="M5.8 9.2v10.2h12.4V9.2"/><path d="M9.6 19.4v-6h4.8v6"/></svg>;
   if (name === "crm") return <svg {...common}><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 8h8M8 12h5M8 16h7"/></svg>;
   if (name === "intake") return <svg {...common}><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 19h14"/></svg>;
+  if (name === "research") return <svg {...common}><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/><path d="M8 11h6M11 8v6"/></svg>;
   if (name === "send") return <svg {...common}><path d="m4 4 16 7.2-7 2.1-2.2 6.7L4 4Z"/><path d="m11 13 4.8-4.8"/></svg>;
   if (name === "mail") return <svg {...common}><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4.5 7 7.5 6 7.5-6"/></svg>;
   if (name === "spark") return <svg {...common}><path d="M12 2.8 14 9l6.2 2-6.2 2-2 6.2-2-6.2-6.2-2 6.2-2 2-6.2Z"/><path d="m19 3 .7 2.2L22 6l-2.3.8L19 9l-.8-2.2L16 6l2.2-.8L19 3Z"/></svg>;

@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, useMemo, useState } from "react";
+import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import Papa from "papaparse";
 import styles from "./IntakeWorkspace.module.css";
@@ -110,9 +110,23 @@ export default function IntakeWorkspace() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [commitResult, setCommitResult] = useState<CommitResult | null>(null);
+  const [researchCandidateIds, setResearchCandidateIds] = useState<string[]>([]);
   const [pipeline, setPipeline] = useState<PipelineState>({ running: false, stage: "idle", done: 0, total: 0, failed: 0 });
 
   const eligible = useMemo(() => preview?.decisions.filter((item) => item.eligible) || [], [preview]);
+  useEffect(() => {
+    const stored = sessionStorage.getItem("jj:research-intake");
+    if (!stored) return;
+    sessionStorage.removeItem("jj:research-intake");
+    try {
+      const payload = JSON.parse(stored) as { raw?: unknown; source?: string; candidateIds?: string[] };
+      setResearchCandidateIds(Array.isArray(payload.candidateIds) ? payload.candidateIds : []);
+      if (payload.raw) void requestPreview(payload.raw, payload.source || "Recherche-Feed");
+    } catch {
+      setError("Die Übergabe aus dem Recherche-Feed konnte nicht gelesen werden.");
+    }
+  }, []);
+
   const stats = useMemo(() => {
     const decisions = preview?.decisions || [];
     return {
@@ -128,6 +142,7 @@ export default function IntakeWorkspace() {
     setError("");
     setMessage("");
     setCommitResult(null);
+    setResearchCandidateIds([]);
     setPipeline({ running: false, stage: "idle", done: 0, total: 0, failed: 0 });
     try {
       const response = await fetch("/api/intake", {
@@ -227,6 +242,14 @@ export default function IntakeWorkspace() {
       const result = await response.json() as CommitResult;
       if (!response.ok) throw new Error(result.error || "Leads konnten nicht übernommen werden.");
       setCommitResult(result);
+      if (researchCandidateIds.length) {
+        await fetch("/api/research-feed", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ action: "mark_imported", ids: researchCandidateIds }),
+        }).catch(() => undefined);
+        setResearchCandidateIds([]);
+      }
       setMessage(String(result.created) + " neue Leads angelegt, " + String(result.updated) + " bestehende Leads ergänzt.");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Leads konnten nicht übernommen werden.");

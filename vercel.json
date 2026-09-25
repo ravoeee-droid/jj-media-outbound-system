@@ -1,7 +1,9 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
-  "regions": ["fra1"],
+  "regions": [
+    "fra1"
+  ],
   "git": {
     "deploymentEnabled": {
       "work/ollama-email-import-20260905": false,
@@ -10,9 +12,20 @@
     }
   },
   "redirects": [
-    { "source": "/", "destination": "/admin/dashboard", "permanent": false }
+    {
+      "source": "/",
+      "destination": "/admin/dashboard",
+      "permanent": false
+    }
   ],
   "crons": [
-    { "path": "/api/cron/automation", "schedule": "0 8 * * *" }
+    {
+      "path": "/api/cron/automation",
+      "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/cron/research-feed",
+      "schedule": "30 5 * * *"
+    }
   ]
 }
