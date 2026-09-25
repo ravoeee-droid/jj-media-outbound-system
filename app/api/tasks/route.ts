@@ -11,6 +11,7 @@ export async function GET() {
       .select({
         id: tasks.id,
         leadId: tasks.leadId,
+        assigneeId: tasks.assigneeId,
         title: tasks.title,
         dueAt: tasks.dueAt,
         status: tasks.status,
@@ -31,7 +32,10 @@ export async function GET() {
 
 const taskUpdate = z.object({
   id: z.string().uuid(),
-  status: z.enum(["open", "done", "dismissed"]),
+  status: z.enum(["open", "done", "dismissed"]).optional(),
+  assigneeId: z.string().uuid().nullable().optional(),
+}).refine((input) => input.status !== undefined || input.assigneeId !== undefined, {
+  message: "Mindestens eine Änderung ist erforderlich.",
 });
 
 export async function PUT(request: Request) {
@@ -40,7 +44,11 @@ export async function PUT(request: Request) {
     const input = taskUpdate.parse(await request.json());
     const [task] = await getDb()
       .update(tasks)
-      .set({ status: input.status, updatedAt: new Date() })
+      .set({
+        ...(input.status !== undefined ? { status: input.status } : {}),
+        ...(input.assigneeId !== undefined ? { assigneeId: input.assigneeId } : {}),
+        updatedAt: new Date(),
+      })
       .where(and(eq(tasks.id, input.id), eq(tasks.workspaceId, workspaceId)))
       .returning();
     if (!task) return Response.json({ error: "Aufgabe nicht gefunden." }, { status: 404 });

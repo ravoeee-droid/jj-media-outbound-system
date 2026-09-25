@@ -1,18 +1,23 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import styles from "./AdminShell.module.css";
+import { ROLE_LABELS, hasPermission, normalizedRole, type TeamPermission } from "@/lib/team";
+import { requireWorkspace } from "@/lib/workspace";
 
-type IconName = "home" | "send" | "spark" | "plug" | "pulse" | "chat" | "mail";
+type IconName = "home" | "send" | "spark" | "plug" | "pulse" | "chat" | "mail" | "team";
+type NavKey = "overview" | "outbound" | "email" | "whatsapp" | "intelligence" | "team" | "integrations" | "system";
+type NavItem = { key: NavKey; label: string; hint: string; href: string; icon: IconName; permission?: TeamPermission };
 
-const navigation = [
+const navigation: readonly NavItem[] = [
   { key: "overview", label: "Übersicht", hint: "Command Center", href: "/dashboard", icon: "home" },
-  { key: "outbound", label: "Outbound", hint: "Leads & Videos", href: "/dashboard/outbound", icon: "send" },
-  { key: "email", label: "E-Mail", hint: "Inbox & Threads", href: "/dashboard/email", icon: "mail" },
-  { key: "whatsapp", label: "WhatsApp", hint: "Inbox & KI-Agent", href: "/dashboard/whatsapp", icon: "chat" },
-  { key: "intelligence", label: "Intelligence", hint: "Chancen & Signale", href: "/dashboard/intelligence", icon: "spark" },
-  { key: "integrations", label: "Integrationen", hint: "Datenquellen", href: "/dashboard/integrations", icon: "plug" },
-  { key: "system", label: "System", hint: "Status & Technik", href: "/system", icon: "pulse" },
-] as const satisfies ReadonlyArray<{ key: string; label: string; hint: string; href: string; icon: IconName }>;
+  { key: "outbound", label: "Outbound", hint: "Leads & Videos", href: "/dashboard/outbound", icon: "send", permission: "view_own_leads" },
+  { key: "email", label: "E-Mail", hint: "Inbox & Threads", href: "/dashboard/email", icon: "mail", permission: "send_email" },
+  { key: "whatsapp", label: "WhatsApp", hint: "Inbox & KI-Agent", href: "/dashboard/whatsapp", icon: "chat", permission: "use_whatsapp" },
+  { key: "intelligence", label: "Intelligence", hint: "Chancen & Signale", href: "/dashboard/intelligence", icon: "spark", permission: "view_kpis" },
+  { key: "team", label: "Team", hint: "Mitarbeiter & Rechte", href: "/dashboard/team", icon: "team", permission: "manage_team" },
+  { key: "integrations", label: "Integrationen", hint: "Datenquellen", href: "/dashboard/integrations", icon: "plug", permission: "manage_settings" },
+  { key: "system", label: "System", hint: "Status & Technik", href: "/system", icon: "pulse", permission: "manage_settings" },
+];
 
 function Icon({ name }: { name: IconName }) {
   const common = { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, "aria-hidden": true };
@@ -22,10 +27,11 @@ function Icon({ name }: { name: IconName }) {
   if (name === "spark") return <svg {...common}><path d="M12 2.8 14 9l6.2 2-6.2 2-2 6.2-2-6.2-6.2-2 6.2-2 2-6.2Z"/><path d="m19 3 .7 2.2L22 6l-2.3.8L19 9l-.8-2.2L16 6l2.2-.8L19 3Z"/></svg>;
   if (name === "plug") return <svg {...common}><path d="M8 3v5M16 3v5"/><path d="M6 8h12v2a6 6 0 0 1-6 6v5"/><path d="M9 21h6"/></svg>;
   if (name === "chat") return <svg {...common}><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-2 2v-10.5A9.5 9.5 0 0 1 12 2a9 9 0 0 1 9 9.5Z"/><path d="M7 10h9M7 14h6"/></svg>;
+  if (name === "team") return <svg {...common}><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>;
   return <svg {...common}><path d="M3 12h4l2-6 4 12 2-6h6"/></svg>;
 }
 
-export default function AdminShell({
+export default async function AdminShell({
   active,
   eyebrow,
   title,
@@ -34,7 +40,7 @@ export default function AdminShell({
   children,
   wide = false,
 }: {
-  active: (typeof navigation)[number]["key"];
+  active: NavKey;
   eyebrow: string;
   title: string;
   description?: string;
@@ -43,6 +49,11 @@ export default function AdminShell({
   wide?: boolean;
 }) {
   const publicSiteUrl = process.env.NEXT_PUBLIC_SITE_URL || "/";
+  const workspace = await requireWorkspace();
+  const role = normalizedRole(workspace.role);
+  const visibleNavigation = navigation.filter((item) => !item.permission || hasPermission(role, workspace.permissions, item.permission));
+  const displayName = workspace.user.name || workspace.user.email || "JJ-Media";
+  const initials = displayName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "JJ";
 
   return (
     <main className={styles.root}>
@@ -59,7 +70,7 @@ export default function AdminShell({
 
         <nav className={styles.nav} aria-label="Admin Navigation">
           <p>Workspace</p>
-          {navigation.map((item) => (
+          {visibleNavigation.map((item) => (
             <Link
               key={item.key}
               href={item.href}
@@ -75,8 +86,8 @@ export default function AdminShell({
 
         <div className={styles.sidebarBottom}>
           <div className={styles.ownerCard}>
-            <span className={styles.avatar}>JJ</span>
-            <div><strong>Jessica Just</strong><small>JJ-Media Admin</small></div>
+            <span className={styles.avatar}>{initials}</span>
+            <div><strong>{displayName}</strong><small>{ROLE_LABELS[role]}</small></div>
           </div>
           <a href={publicSiteUrl} className={styles.siteLink}>Website ansehen <span>↗</span></a>
         </div>
@@ -89,7 +100,7 @@ export default function AdminShell({
           <div className={styles.topbarRight}>
             <a href={publicSiteUrl} className={styles.previewLink}>Website <span>↗</span></a>
             <span className={styles.environment}>LIVE</span>
-            <div className={styles.avatar}>JJ</div>
+            <div className={styles.avatar}>{initials}</div>
           </div>
         </header>
 
@@ -107,7 +118,7 @@ export default function AdminShell({
       </section>
 
       <nav className={styles.mobileNav} aria-label="Mobile Admin Navigation">
-        {navigation.map((item) => (
+        {visibleNavigation.map((item) => (
           <Link key={item.key} href={item.href} className={active === item.key ? styles.mobileNavActive : styles.mobileNavLink} aria-current={active === item.key ? "page" : undefined}>
             <Icon name={item.icon} /><span>{item.label}</span>
           </Link>

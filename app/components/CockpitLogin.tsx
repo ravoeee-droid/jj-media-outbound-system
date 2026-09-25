@@ -15,6 +15,7 @@ function safeAdminTarget(value: string | null) {
 }
 
 export default function CockpitLogin() {
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -27,7 +28,7 @@ export default function CockpitLogin() {
       const response = await fetch("/api/cockpit/login", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ password }),
+        body: JSON.stringify({ email: email.trim() || undefined, password }),
       });
       const payload = await response.json() as { error?: string };
       if (!response.ok) throw new Error(payload.error || "Anmeldung fehlgeschlagen.");
@@ -55,14 +56,18 @@ export default function CockpitLogin() {
         <form className={styles.card} onSubmit={submit}>
           <p className={styles.eyebrow}>Geschützter Bereich</p>
           <h2>Growth OS öffnen</h2>
-          <p>Passwort eingeben. Die Anmeldung bleibt auf diesem Gerät 30 Tage aktiv.</p>
+          <p>Mitarbeiter melden sich mit ihrer E-Mail und ihrem eigenen Passwort an. Der bestehende Adminzugang funktioniert weiterhin nur mit Passwort.</p>
+          <label>
+            <span>E-Mail <em>für Mitarbeiter</em></span>
+            <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="username" placeholder="name@jj-media.de" autoFocus />
+          </label>
           <label>
             <span>Passwort</span>
-            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" autoFocus required />
+            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required />
           </label>
           {error && <div className={styles.error} role="alert">{error}</div>}
           <button type="submit" disabled={loading || !password}>{loading ? "Wird geprüft …" : "Growth OS öffnen →"}</button>
-          <small>Nur der interne Adminbereich ist geschützt. Personalisierte Analyse-Links für Leads bleiben öffentlich erreichbar.</small>
+          <small>Jeder Mitarbeiter erhält einen eigenen Zugang. Rechte und Rollen verwaltet Jessica im Team-Bereich.</small>
         </form>
       </section>
     </main>

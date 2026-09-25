@@ -191,6 +191,7 @@ export async function POST(request: Request) {
           await db.insert(tasks).values({
             workspaceId: workspace.workspaceId,
             leadId: lead.id,
+            assigneeId: lead.ownerId || workspace.user.id,
             title: taskTitle,
             dueAt,
             priority: followup.priority,

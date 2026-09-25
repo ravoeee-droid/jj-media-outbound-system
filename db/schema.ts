@@ -21,6 +21,10 @@ export const users = pgTable("users", {
   email: text("email").unique(),
   emailVerified: timestamp("email_verified", { withTimezone: true }),
   image: text("image"),
+  passwordHash: text("password_hash"),
+  passwordSalt: text("password_salt"),
+  status: text("status").notNull().default("active"),
+  lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
   createdAt,
   updatedAt,
 });
@@ -89,6 +93,7 @@ export const workspaceMembers = pgTable(
     workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
     userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
     role: text("role").notNull().default("member"),
+    permissions: jsonb("permissions").$type<string[]>().notNull().default([]),
     createdAt,
   },
   (table) => [
@@ -208,6 +213,7 @@ export const tasks = pgTable(
     id: uuid("id").defaultRandom().primaryKey(),
     workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
     leadId: uuid("lead_id").references(() => leads.id, { onDelete: "cascade" }),
+    assigneeId: uuid("assignee_id").references(() => users.id, { onDelete: "set null" }),
     title: text("title").notNull(),
     dueAt: timestamp("due_at", { withTimezone: true }),
     status: text("status").notNull().default("open"),
@@ -216,7 +222,10 @@ export const tasks = pgTable(
     createdAt,
     updatedAt,
   },
-  (table) => [index("tasks_workspace_due_idx").on(table.workspaceId, table.status, table.dueAt)],
+  (table) => [
+    index("tasks_workspace_due_idx").on(table.workspaceId, table.status, table.dueAt),
+    index("tasks_assignee_idx").on(table.workspaceId, table.assigneeId, table.status, table.dueAt),
+  ],
 );
 
 export const outreach = pgTable(
