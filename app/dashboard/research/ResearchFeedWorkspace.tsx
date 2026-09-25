@@ -18,6 +18,7 @@ type Candidate = {
   reviewCount: number;
   ratingX10: number;
   discoveredAt: string;
+  raw?: { instagramUrl?: string; socialLinks?: string[] };
 };
 
 type Payload = {
@@ -86,19 +87,24 @@ export default function ResearchFeedWorkspace() {
     setSelected(new Set(top30.map((item) => item.id)));
   }
 
+  async function persistConfig() {
+    const queries = queriesText.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
+    const response = await fetch("/api/research-feed", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled, target, queries }),
+    });
+    const result = await response.json() as { error?: string };
+    if (!response.ok) throw new Error(result.error || "Suchprofil konnte nicht gespeichert werden.");
+  }
+
   async function saveConfig() {
+    if (busy) return;
     setBusy("save");
     setError("");
     setMessage("");
     try {
-      const queries = queriesText.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
-      const response = await fetch("/api/research-feed", {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ enabled, target, queries }),
-      });
-      const result = await response.json() as { error?: string };
-      if (!response.ok) throw new Error(result.error || "Suchprofil konnte nicht gespeichert werden.");
+      await persistConfig();
       setMessage("Suchprofil gespeichert.");
       await load(status, true);
     } catch (caught) {
@@ -114,7 +120,7 @@ export default function ResearchFeedWorkspace() {
     setError("");
     setMessage("");
     try {
-      await saveConfig();
+      await persistConfig();
       const response = await fetch("/api/research-feed", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -228,6 +234,7 @@ export default function ResearchFeedWorkspace() {
             {status === "new" && <button onClick={selectTop30}>Top 30</button>}
             {status === "new" && <button className={styles.primary} disabled={!selected.size || Boolean(busy)} onClick={() => void toIntake()}>{busy === "intake" ? "Öffnet …" : "Im Intake prüfen"}</button>}
             {(status === "new" || status === "shortlisted") && <button disabled={!selected.size || Boolean(busy)} onClick={() => void changeStatus("dismiss")}>Verwerfen</button>}
+            {status === "shortlisted" && <button disabled={!selected.size || Boolean(busy)} onClick={() => void changeStatus("restore")}>Zurück in Neu</button>}
             {status === "dismissed" && <button disabled={!selected.size || Boolean(busy)} onClick={() => void changeStatus("restore")}>Wiederherstellen</button>}
           </div>
         </div>
@@ -242,7 +249,10 @@ export default function ResearchFeedWorkspace() {
                   <td>
                     <strong>{item.company}</strong>
                     <small>{[item.city, item.region].filter(Boolean).join(", ") || "Standort aus Quelle"}</small>
-                    {item.websiteUrl && <a href={item.websiteUrl} target="_blank" rel="noreferrer">Website ↗</a>}
+                    <span className={styles.links}>
+                      {item.websiteUrl && <a href={item.websiteUrl} target="_blank" rel="noreferrer">Website ↗</a>}
+                      {item.raw?.instagramUrl && <a href={item.raw.instagramUrl} target="_blank" rel="noreferrer">Instagram ↗</a>}
+                    </span>
                   </td>
                   <td><strong>{item.phone || item.email || "Kontakt noch offen"}</strong><small>{item.email && item.phone ? item.email : ""}</small></td>
                   <td><span className={styles.score}>{item.score}</span></td>

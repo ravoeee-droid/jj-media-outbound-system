@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getDb } from "@/db";
 import { users, workspaceMembers } from "@/db/schema";
 import { commitLeadIntake, prepareLeadIntake } from "@/lib/lead-intake";
+import { markResearchCandidatesImported } from "@/lib/research-feed";
 import { hasPermission } from "@/lib/team";
 import { apiError, requirePermission } from "@/lib/workspace";
 
@@ -21,6 +22,7 @@ const commitInput = z.object({
   source: z.string().trim().max(180).optional().default("Lead Intake"),
   selectedIntakeIds: z.array(z.string().min(3).max(500)).min(1).max(30),
   ownerId: z.string().uuid().nullable().optional(),
+  researchCandidateIds: z.array(z.string().uuid()).max(30).optional().default([]),
 });
 
 const inputSchema = z.discriminatedUnion("mode", [previewInput, commitInput]);
@@ -107,6 +109,17 @@ export async function POST(request: Request) {
       ownerId,
     });
 
+    let researchImported = 0;
+    if (input.researchCandidateIds.length && result.committed.length) {
+      const allowed = new Set(input.researchCandidateIds);
+      const mappings = [...result.committed, ...result.alreadyPresent].flatMap((item) =>
+        item.candidateIds
+          .filter((candidateId) => allowed.has(candidateId))
+          .map((candidateId) => ({ candidateId, leadId: item.leadId })),
+      );
+      researchImported = await markResearchCandidatesImported(workspace.workspaceId, mappings);
+    }
+
     return Response.json({
       ok: true,
       ownerId,
@@ -114,6 +127,7 @@ export async function POST(request: Request) {
       updated: result.updated,
       processed: result.leadIds.length,
       leadIds: result.leadIds,
+      researchImported,
     });
   } catch (error) {
     if (error instanceof z.ZodError) {

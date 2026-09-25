@@ -70,6 +70,13 @@ type Prepared = {
   decision: IntakeDecision;
 };
 
+function candidateIdsFromTags(input: NormalizedLeadInput) {
+  return (input.tags ?? [])
+    .filter((tag) => tag.startsWith("candidate:"))
+    .map((tag) => tag.slice("candidate:".length))
+    .filter(Boolean);
+}
+
 function rawRecordCount(raw: unknown) {
   if (Array.isArray(raw)) return raw.length;
   if (!raw || typeof raw !== "object") return 0;
@@ -300,12 +307,28 @@ export async function commitLeadIntake(options: {
   const preview = await prepareLeadIntake(options.workspaceId, options.raw);
   const selected = new Set(options.selectedIntakeIds);
   const candidates = preview.prepared.filter((item) => selected.has(item.intakeId) && item.decision.eligible).slice(0, 30);
-  if (!candidates.length) return { created: 0, updated: 0, leadIds: [] as string[], decisions: preview.decisions };
+  const alreadyPresent = preview.prepared
+    .filter((item) => item.existing && item.decision.kind === "duplicate")
+    .map((item) => ({
+      intakeId: item.intakeId,
+      leadId: item.existing!.id,
+      candidateIds: candidateIdsFromTags(item.input),
+    }));
+
+  if (!candidates.length) return {
+    created: 0,
+    updated: 0,
+    leadIds: [] as string[],
+    committed: [] as Array<{ intakeId: string; leadId: string; candidateIds: string[] }>,
+    alreadyPresent,
+    decisions: preview.decisions,
+  };
 
   const db = getDb();
   const createdInputs = candidates.filter((item) => !item.existing);
   const updateInputs = candidates.filter((item) => item.existing);
   const leadIds: string[] = [];
+  const committed: Array<{ intakeId: string; leadId: string; candidateIds: string[] }> = [];
   let createdCount = 0;
   let updatedCount = 0;
 
@@ -353,9 +376,25 @@ export async function commitLeadIntake(options: {
       } satisfies typeof leads.$inferInsert;
     });
 
-    const created = await db.insert(leads).values(rows).onConflictDoNothing().returning({ id: leads.id, company: leads.company });
+    const created = await db.insert(leads).values(rows).onConflictDoNothing().returning({
+      id: leads.id,
+      normalizedCompany: leads.normalizedCompany,
+    });
     leadIds.push(...created.map((row) => row.id));
     createdCount = created.length;
+
+    const createdInputByCompany = new Map(
+      createdInputs.map((item) => [normalizeCompany(item.input.company), item] as const),
+    );
+    for (const row of created) {
+      const source = createdInputByCompany.get(row.normalizedCompany);
+      if (!source) continue;
+      committed.push({
+        intakeId: source.intakeId,
+        leadId: row.id,
+        candidateIds: candidateIdsFromTags(source.input),
+      });
+    }
     if (created.length) {
       await db.insert(activities).values(created.map((row) => ({
         workspaceId: options.workspaceId,
@@ -378,6 +417,11 @@ export async function commitLeadIntake(options: {
     if (!updated) continue;
     leadIds.push(updated.id);
     updatedCount += 1;
+    committed.push({
+      intakeId: item.intakeId,
+      leadId: updated.id,
+      candidateIds: candidateIdsFromTags(item.input),
+    });
     await db.insert(activities).values({
       workspaceId: options.workspaceId,
       leadId: updated.id,
@@ -392,6 +436,8 @@ export async function commitLeadIntake(options: {
     created: createdCount,
     updated: updatedCount,
     leadIds,
+    committed,
+    alreadyPresent,
     decisions: preview.decisions,
   };
 }

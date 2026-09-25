@@ -110,75 +110,75 @@ async function googlePlacesSearch(query: string): Promise<DiscoveredCandidate[]>
   if (!key) return [];
   const apiKey = key;
 
-  const url = new URL("https://maps.googleapis.com/maps/api/place/textsearch/json");
-  url.searchParams.set("query", query);
-  url.searchParams.set("language", "de");
-  url.searchParams.set("region", "de");
-  url.searchParams.set("key", apiKey);
+  const response = await fetch("https://places.googleapis.com/v1/places:searchText", {
+    method: "POST",
+    cache: "no-store",
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json",
+      "x-goog-api-key": apiKey,
+      "x-goog-field-mask": [
+        "places.id",
+        "places.displayName",
+        "places.formattedAddress",
+        "places.nationalPhoneNumber",
+        "places.websiteUri",
+        "places.primaryType",
+        "places.rating",
+        "places.userRatingCount",
+      ].join(","),
+    },
+    body: JSON.stringify({
+      textQuery: query,
+      languageCode: "de",
+      regionCode: "DE",
+      pageSize: 20,
+    }),
+    signal: AbortSignal.timeout(15_000),
+  });
 
-  const result = await fetchJson<{
-    status?: string;
-    error_message?: string;
-    results?: Array<{
-      place_id?: string;
-      name?: string;
-      formatted_address?: string;
-      rating?: number;
-      user_ratings_total?: number;
-      types?: string[];
-    }>;
-  }>(url);
-
-  if (result.status && !["OK", "ZERO_RESULTS"].includes(result.status)) {
-    throw new Error("Google Places: " + result.status + (result.error_message ? " · " + result.error_message : ""));
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error("Google Places (New): HTTP " + response.status + (detail ? " · " + detail.slice(0, 240) : ""));
   }
 
-  const base = (result.results || []).filter((item) => item.place_id && item.name).slice(0, 20);
-  const output: DiscoveredCandidate[] = [];
+  const result = await response.json() as {
+    places?: Array<{
+      id?: string;
+      displayName?: { text?: string; languageCode?: string };
+      formattedAddress?: string;
+      nationalPhoneNumber?: string;
+      websiteUri?: string;
+      primaryType?: string;
+      rating?: number;
+      userRatingCount?: number;
+    }>;
+  };
 
-  async function detail(item: (typeof base)[number]) {
-    const detailUrl = new URL("https://maps.googleapis.com/maps/api/place/details/json");
-    detailUrl.searchParams.set("place_id", item.place_id!);
-    detailUrl.searchParams.set("fields", "name,formatted_address,formatted_phone_number,website,types");
-    detailUrl.searchParams.set("language", "de");
-    detailUrl.searchParams.set("key", apiKey);
-    const details = await fetchJson<{
-      status?: string;
-      result?: {
-        website?: string;
-        formatted_phone_number?: string;
-        formatted_address?: string;
-        types?: string[];
-      };
-    }>(detailUrl).catch(() => ({ status: "ERROR", result: undefined }));
-    const websiteUrl = normalizeWebsite(details.result?.website || "");
-    return {
+  return (result.places || [])
+    .filter((place) => place.id && place.displayName?.text)
+    .slice(0, 20)
+    .map((place) => ({
       source: "google_places" as const,
       sourceQuery: query,
-      externalId: item.place_id!,
-      company: item.name!,
-      websiteUrl,
-      phone: details.result?.formatted_phone_number || "",
+      externalId: place.id!,
+      company: place.displayName!.text!,
+      websiteUrl: normalizeWebsite(place.websiteUri || ""),
+      phone: place.nationalPhoneNumber || "",
       email: "",
-      city: details.result?.formatted_address || item.formatted_address || "",
+      city: place.formattedAddress || "",
       region: "",
-      category: details.result?.types?.[0] || item.types?.[0] || "other",
-      ratingX10: Math.max(0, Math.round(Number(item.rating || 0) * 10)),
-      reviewCount: Math.max(0, Math.round(Number(item.user_ratings_total || 0))),
+      category: place.primaryType || "other",
+      ratingX10: Math.max(0, Math.round(Number(place.rating || 0) * 10)),
+      reviewCount: Math.max(0, Math.round(Number(place.userRatingCount || 0))),
       raw: {
-        placeId: item.place_id,
-        rating: item.rating || 0,
-        reviewCount: item.user_ratings_total || 0,
-        address: details.result?.formatted_address || item.formatted_address || "",
+        placeId: place.id,
+        rating: place.rating || 0,
+        reviewCount: place.userRatingCount || 0,
+        address: place.formattedAddress || "",
+        api: "places-new",
       },
-    } satisfies DiscoveredCandidate;
-  }
-
-  for (let index = 0; index < base.length; index += 5) {
-    const batch = await Promise.all(base.slice(index, index + 5).map(detail));
-    output.push(...batch);
-  }
-  return output;
+    }));
 }
 
 function decodeHtml(value: string) {
@@ -269,6 +269,7 @@ function scoreCandidate(item: DiscoveredCandidate) {
   if (item.websiteUrl) score += 18;
   if (item.phone) score += 25;
   if (item.email) score += 22;
+  if (typeof item.raw.instagramUrl === "string" && item.raw.instagramUrl) score += 8;
   if (item.ratingX10 >= 40) score += 5;
   if (item.reviewCount >= 10) score += 3;
   if (item.reviewCount >= 50) score += 3;
@@ -281,6 +282,7 @@ function reasonFor(item: DiscoveredCandidate, score: number) {
   if (item.phone) parts.push("Telefon vorhanden");
   if (item.email) parts.push("E-Mail vorhanden");
   if (item.websiteUrl) parts.push("Website vorhanden");
+  if (typeof item.raw.instagramUrl === "string" && item.raw.instagramUrl) parts.push("Instagram gefunden");
   if (item.reviewCount >= 50) parts.push(item.reviewCount + " Google-Bewertungen");
   if (!parts.length) parts.push("Recherchekandidat");
   return parts.join(" · ") + " · Score " + score + "/100";
@@ -288,9 +290,9 @@ function reasonFor(item: DiscoveredCandidate, score: number) {
 
 async function enrichTopWebsites(items: DiscoveredCandidate[]) {
   const candidates = items
-    .filter((item) => item.websiteUrl && (!item.email || !item.phone))
+    .filter((item) => item.websiteUrl)
     .sort((a, b) => scoreCandidate(b) - scoreCandidate(a))
-    .slice(0, 12);
+    .slice(0, 20);
 
   for (let index = 0; index < candidates.length; index += 3) {
     const batch = candidates.slice(index, index + 3);
@@ -300,11 +302,17 @@ async function enrichTopWebsites(items: DiscoveredCandidate[]) {
       item.phone ||= enriched.phone;
       item.city ||= enriched.city;
       item.region ||= enriched.region;
+      const socialLinks = enriched.evidence
+        .filter((entry) => entry.kind === "social")
+        .map((entry) => entry.value);
+      const instagramUrl = socialLinks.find((url) => /instagram\.com/i.test(url)) || "";
       item.raw = {
         ...item.raw,
         websiteConfidence: enriched.confidence,
         websitePages: enriched.pagesScanned.slice(0, 6),
         executive: enriched.ceo,
+        socialLinks: socialLinks.slice(0, 5),
+        instagramUrl,
       };
     }));
     void results;
@@ -396,8 +404,9 @@ export async function runResearchFeed(workspaceId: string, override?: Partial<Re
     return Boolean(company) && !knownCompanies.has(company) && (!domain || !knownDomains.has(domain));
   });
 
+  let inserted = 0;
   if (fresh.length) {
-    await db.insert(researchCandidates).values(fresh.map((item) => {
+    const rows = await db.insert(researchCandidates).values(fresh.map((item) => {
       const score = scoreCandidate(item);
       const websiteUrl = normalizeWebsite(item.websiteUrl);
       return {
@@ -422,15 +431,16 @@ export async function runResearchFeed(workspaceId: string, override?: Partial<Re
         raw: item.raw,
         discoveredAt: new Date(),
       };
-    })).onConflictDoNothing();
+    })).onConflictDoNothing().returning({ id: researchCandidates.id });
+    inserted = rows.length;
   }
 
-  const duplicateCount = Math.max(0, discovered.length - fresh.length);
+  const duplicateCount = Math.max(0, discovered.length - inserted);
   return {
     ok: true,
     configured: true,
     discovered: discovered.length,
-    inserted: fresh.length,
+    inserted,
     duplicates: duplicateCount,
     source: googleUsed ? "google_places+web" : "web_search",
     config,
@@ -473,6 +483,7 @@ export async function researchCandidatesForIntake(workspaceId: string, ids: stri
     phone: row.phone,
     email: row.email,
     websiteUrl: row.websiteUrl,
+    instagramUrl: typeof row.raw.instagramUrl === "string" ? row.raw.instagramUrl : "",
     city: row.city,
     region: row.region,
     category: row.category,
@@ -482,4 +493,35 @@ export async function researchCandidatesForIntake(workspaceId: string, ids: stri
     summary: row.reason,
     tags: ["research-feed", "quelle:" + row.source, "candidate:" + row.id],
   }));
+}
+
+
+export async function markResearchCandidatesImported(
+  workspaceId: string,
+  mappings: Array<{ candidateId: string; leadId: string }>,
+) {
+  const unique = new Map<string, string>();
+  for (const mapping of mappings) {
+    if (mapping.candidateId && mapping.leadId) unique.set(mapping.candidateId, mapping.leadId);
+  }
+
+  let updated = 0;
+  for (const [candidateId, leadId] of [...unique.entries()].slice(0, 30)) {
+    const rows = await getDb()
+      .update(researchCandidates)
+      .set({
+        status: "imported",
+        importedLeadId: leadId,
+        reviewedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(researchCandidates.workspaceId, workspaceId),
+        eq(researchCandidates.id, candidateId),
+        or(eq(researchCandidates.status, "new"), eq(researchCandidates.status, "shortlisted")),
+      ))
+      .returning({ id: researchCandidates.id });
+    updated += rows.length;
+  }
+  return updated;
 }

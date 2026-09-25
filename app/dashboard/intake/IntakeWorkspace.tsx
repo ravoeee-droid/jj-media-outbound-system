@@ -45,6 +45,7 @@ type CommitResult = {
   updated: number;
   processed: number;
   leadIds: string[];
+  researchImported?: number;
   error?: string;
 };
 
@@ -120,8 +121,8 @@ export default function IntakeWorkspace() {
     sessionStorage.removeItem("jj:research-intake");
     try {
       const payload = JSON.parse(stored) as { raw?: unknown; source?: string; candidateIds?: string[] };
-      setResearchCandidateIds(Array.isArray(payload.candidateIds) ? payload.candidateIds : []);
-      if (payload.raw) void requestPreview(payload.raw, payload.source || "Recherche-Feed");
+      const candidateIds = Array.isArray(payload.candidateIds) ? payload.candidateIds : [];
+      if (payload.raw) void requestPreview(payload.raw, payload.source || "Recherche-Feed", candidateIds);
     } catch {
       setError("Die Übergabe aus dem Recherche-Feed konnte nicht gelesen werden.");
     }
@@ -137,12 +138,12 @@ export default function IntakeWorkspace() {
     };
   }, [preview]);
 
-  async function requestPreview(nextRaw: unknown, nextSource: string) {
+  async function requestPreview(nextRaw: unknown, nextSource: string, nextResearchCandidateIds: string[] = []) {
     setLoading(true);
     setError("");
     setMessage("");
     setCommitResult(null);
-    setResearchCandidateIds([]);
+    setResearchCandidateIds(nextResearchCandidateIds);
     setPipeline({ running: false, stage: "idle", done: 0, total: 0, failed: 0 });
     try {
       const response = await fetch("/api/intake", {
@@ -237,20 +238,17 @@ export default function IntakeWorkspace() {
           source,
           selectedIntakeIds: [...selected],
           ownerId,
+          researchCandidateIds,
         }),
       });
       const result = await response.json() as CommitResult;
       if (!response.ok) throw new Error(result.error || "Leads konnten nicht übernommen werden.");
       setCommitResult(result);
-      if (researchCandidateIds.length) {
-        await fetch("/api/research-feed", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ action: "mark_imported", ids: researchCandidateIds }),
-        }).catch(() => undefined);
-        setResearchCandidateIds([]);
-      }
-      setMessage(String(result.created) + " neue Leads angelegt, " + String(result.updated) + " bestehende Leads ergänzt.");
+      setResearchCandidateIds([]);
+      const researchNote = result.researchImported
+        ? " · " + String(result.researchImported) + " Recherche-Kandidaten sauber verknüpft"
+        : "";
+      setMessage(String(result.created) + " neue Leads angelegt, " + String(result.updated) + " bestehende Leads ergänzt" + researchNote + ".");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Leads konnten nicht übernommen werden.");
     } finally {
@@ -318,6 +316,7 @@ export default function IntakeWorkspace() {
     setSelected(new Set());
     setOwnerChoice("__me__");
     setCommitResult(null);
+    setResearchCandidateIds([]);
     setPipeline({ running: false, stage: "idle", done: 0, total: 0, failed: 0 });
     setMessage("");
     setError("");
