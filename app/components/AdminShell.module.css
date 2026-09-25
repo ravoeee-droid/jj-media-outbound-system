@@ -71,7 +71,7 @@
 .workspaceLabel strong{font-size:10px;font-weight:720}
 .workspaceLabel small{color:#77727b;font-size:8px;line-height:1.4}
 .liveDot{width:7px;height:7px;border-radius:50%;background:#70d6a6;box-shadow:0 0 0 4px rgba(112,214,166,.08);flex:0 0 auto;margin-top:3px}
-.nav{display:flex;flex-direction:column;gap:5px;margin-top:20px}
+.nav{display:flex;min-height:0;flex-direction:column;gap:5px;margin-top:20px;overflow-y:auto;scrollbar-width:none}.nav::-webkit-scrollbar{display:none}
 .nav>p{margin:0 10px 7px;color:#625e65;font-size:8px;text-transform:uppercase;letter-spacing:.2em;font-weight:850}
 .navLink,.navActive{
   min-height:52px;
@@ -173,9 +173,10 @@
     right:10px;
     bottom:10px;
     z-index:100;
-    display:grid;
-    grid-template-columns:repeat(6,minmax(64px,1fr));
+    display:flex;
     gap:4px;
+    overflow-x:auto;
+    scrollbar-width:none;
     padding:6px;
     background:rgba(20,18,22,.94);
     backdrop-filter:blur(20px);
@@ -183,7 +184,8 @@
     border-radius:19px;
     box-shadow:0 18px 48px rgba(17,16,20,.28);
   }
-  .mobileNavLink,.mobileNavActive{display:flex;min-width:0;flex-direction:column;align-items:center;justify-content:center;gap:3px;text-decoration:none;border-radius:13px;padding:8px 2px;color:#77717b;font-size:7px;font-weight:720}
+  .mobileNav::-webkit-scrollbar{display:none}
+  .mobileNavLink,.mobileNavActive{display:flex;flex:0 0 68px;min-width:68px;flex-direction:column;align-items:center;justify-content:center;gap:3px;text-decoration:none;border-radius:13px;padding:8px 2px;color:#77717b;font-size:7px;font-weight:720}
   .mobileNavLink svg,.mobileNavActive svg{width:17px;height:17px}
   .mobileNavActive{background:#fff8f6;color:var(--ink)}
 }

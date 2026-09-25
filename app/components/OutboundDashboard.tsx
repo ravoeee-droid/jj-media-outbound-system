@@ -668,7 +668,7 @@ export default function OutboundDashboard({ userName = "JJ-Media" }: { userName?
               <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Leads durchsuchen" aria-label="Leads durchsuchen" />
               <kbd>⌘ K</kbd>
             </label>
-            <label className={`button button--ghost import-button ${importing ? "is-loading" : ""}`}>{importing ? "Import läuft …" : "Importieren"}<input type="file" accept=".csv,.json,text/csv,application/json" onChange={importFile} disabled={importing} /></label>
+            <Link className="button button--ghost import-button" href="/dashboard/intake">Lead Intake</Link>
             <button className="button button--primary" onClick={() => setShowCreate(true)}><span aria-hidden="true">＋</span> Neuer Lead</button>
           </div>
         </header>
@@ -736,7 +736,7 @@ export default function OutboundDashboard({ userName = "JJ-Media" }: { userName?
                 <div><p className="eyebrow eyebrow--dark">Datenbank</p><h2>Alle Leads</h2><p>Vom Instagram-Profil bis zum Termin – mit echtem Status und allen Aktionen.</p></div>
                 <div className="workspace-actions">
                   {selectedLeadIds.length > 0 && <button className="button button--soft" onClick={() => void generateSelectedLeads()} disabled={Boolean(batchProgress)}>{batchProgress ? `${batchProgress.current} / ${batchProgress.total} werden erstellt …` : `${selectedLeadIds.length} Videos vorbereiten`}</button>}
-                  <label className={`button button--ghost import-button ${importing ? "is-loading" : ""}`}>{importing ? "Import läuft …" : "CSV / JSON importieren"}<input type="file" accept=".csv,.json,text/csv,application/json" onChange={importFile} disabled={importing} /></label>
+                  <Link className="button button--ghost import-button" href="/dashboard/intake">Lead Intake öffnen</Link>
                   <button className="button button--primary" onClick={() => setShowCreate(true)}>＋ Lead hinzufügen</button>
                 </div>
               </div>

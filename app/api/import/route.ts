@@ -8,14 +8,14 @@ import {
   normalizeWebsite,
   slugify,
 } from "@/lib/leads";
-import { apiError, requireWorkspace } from "@/lib/workspace";
+import { apiError, requirePermission } from "@/lib/workspace";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
 export async function POST(request: Request) {
   try {
-    const workspace = await requireWorkspace();
+    const workspace = await requirePermission("manage_leads");
     const payload = (await request.json()) as { leads?: unknown[]; raw?: unknown; source?: string };
     const incoming = normalizeImport(payload.raw ?? payload.leads ?? []).slice(0, 500);
     if (!incoming.length) {
