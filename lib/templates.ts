@@ -5,6 +5,9 @@ export const defaultSettings: Record<string, string> = {
   offer_name: "Social Media Wachstumssystem",
   booking_cta: "15 Minuten Potenzial-Call",
   email_subject: "Kurzes Video für {{unternehmen}}",
+  info_email_subject: "Wie besprochen: kurzes Video für {{unternehmen}}",
+  info_email_body:
+    "Hallo {{vorname}},\n\nwie besprochen habe ich die kurze Analyse für {{unternehmen}} hier vorbereitet:\n\n{{video_link}}\n\nWenn es relevant ist, können Sie direkt auf der Seite einen passenden Termin auswählen.\n\nViele Grüße\nJessica | JJ-Media",
   email_body:
     "Hallo {{vorname}},\n\nich habe mir das Instagram-Profil von {{unternehmen}} angesehen und dazu eine kurze persönliche Social-Media-Analyse vorbereitet:\n\n{{video_link}}\n\nDirekt daneben können Sie einen passenden Termin auswählen, falls die drei Social-Media-Hebel für Sie relevant sind.\n\nViele Grüße\nJJ-Media",
   followup_1_body:

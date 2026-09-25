@@ -29,6 +29,8 @@ jobs:
         run: npm run test:whatsapp
       - name: Lead Scout validation tests
         run: npm run test:research
+      - name: Outreach lifecycle tests
+        run: npm run test:outreach
       - name: Check WhatsApp history sync script
         run: node --check services/whatsapp-bridge/history-sync.mjs
       - name: Production build

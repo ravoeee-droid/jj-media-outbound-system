@@ -13,6 +13,7 @@ const inputSchema = z.object({
   step: z.number().int().min(1).max(3).optional().default(1),
   subject: z.string().trim().min(1).max(240).optional(),
   body: z.string().trim().min(1).max(20_000).optional(),
+  context: z.enum(["default", "info_requested"]).optional().default("default"),
 });
 
 function addDays(days: number) {
@@ -46,12 +47,14 @@ export async function POST(request: Request) {
     }
 
     const values = { ...defaultSettings, ...Object.fromEntries(settingRows.map((row) => [row.key, row.value])) };
+    const infoRequested = input.context === "info_requested" && input.step === 1;
+    const baseSubjectTemplate = infoRequested ? values.info_email_subject : values.email_subject;
     const template = input.step === 1
-      ? values.email_body
+      ? (infoRequested ? values.info_email_body : values.email_body)
       : input.step === 2
         ? values.followup_1_body
         : values.followup_2_body;
-    const subject = input.subject || renderTemplate(input.step === 1 ? values.email_subject : `Re: ${values.email_subject}`, lead, appBaseUrl);
+    const subject = input.subject || renderTemplate(input.step === 1 ? baseSubjectTemplate : `Re: ${values.email_subject}`, lead, appBaseUrl);
     const body = input.body || renderTemplate(template, lead, appBaseUrl);
     const html = renderEmailHtml(body, lead, appBaseUrl);
     const mailUrl = `mailto:${encodeURIComponent(lead.email)}?subject=${encodeURIComponent(subject)}`;
@@ -154,13 +157,15 @@ export async function POST(request: Request) {
     ]);
 
     if (input.step === 1) {
+      await db.update(tasks).set({ status: "done", updatedAt: new Date() })
+        .where(and(eq(tasks.workspaceId, workspace.workspaceId), eq(tasks.leadId, lead.id), eq(tasks.type, "send_info"), eq(tasks.status, "open")));
       const followups = [
         { step: 2 as const, delay: Number(values.followup_1_delay_days || 2), template: values.followup_1_body, priority: "high" },
         { step: 3 as const, delay: Number(values.followup_2_delay_days || 5), template: values.followup_2_body, priority: "normal" },
       ];
       for (const followup of followups) {
         const dueAt = addDays(followup.delay);
-        const followupSubject = renderTemplate(`Re: ${values.email_subject}`, lead, appBaseUrl);
+        const followupSubject = /^re:/i.test(subject) ? subject : `Re: ${subject}`;
         const followupBody = renderTemplate(followup.template, lead, appBaseUrl);
         const [storedFollowup] = await db
           .select()

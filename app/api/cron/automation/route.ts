@@ -2,6 +2,8 @@ import { and, eq, lt, lte } from "drizzle-orm";
 import { getDb } from "@/db";
 import { activities, leads, outreach, settings, tasks } from "@/db/schema";
 import { sendStratoMessage } from "@/lib/strato-mail";
+import { cancelPendingEmailFollowups, syncInboundEmailReplies } from "@/lib/outreach-lifecycle";
+import { shouldStopEmailFollowups } from "@/lib/outreach-policy";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -15,6 +17,10 @@ export async function GET(request: Request) {
   if (!authorized(request)) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
   const db = getDb();
+  const replySync = await syncInboundEmailReplies().catch((error) => {
+    console.error("STRATO Reply-Sync fehlgeschlagen", error);
+    return { checked: 0, matched: 0, stopped: 0 };
+  });
   const staleBefore = new Date(Date.now() - 15 * 60 * 1000);
   await db
     .update(outreach)
@@ -31,13 +37,13 @@ export async function GET(request: Request) {
   let ready = 0;
   let failed = 0;
   for (const row of due) {
-    const blocked = row.lead.pipelineStage === "lost"
-      || row.lead.tags.some((tag) => ["opt-out", "do-not-contact", "gesperrt"].includes(tag.toLowerCase()));
+    const blocked = shouldStopEmailFollowups(row.lead);
     if (blocked) {
-      await db
-        .update(outreach)
-        .set({ status: "cancelled", updatedAt: new Date() })
-        .where(and(eq(outreach.id, row.item.id), eq(outreach.status, "scheduled")));
+      await cancelPendingEmailFollowups({
+        workspaceId: row.item.workspaceId,
+        leadId: row.lead.id,
+        reason: "Lead hat geantwortet, einen Termin gebucht, abgesagt oder ist für Kontakt gesperrt.",
+      });
       continue;
     }
 
@@ -107,6 +113,6 @@ export async function GET(request: Request) {
   return Response.json({
     ok: true,
     enrichment: { mode: "manual", processed: 0 },
-    outreach: { processed: due.length, sent, ready, failed },
+    outreach: { processed: due.length, sent, ready, failed, replySync },
   });
 }
