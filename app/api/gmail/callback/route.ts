@@ -14,6 +14,8 @@ function destinationFromRequest(request: Request) {
     .find(([key]) => key === "jj_google_destination")?.[1];
   if (value === "email") return "email";
   if (value === "whatsapp") return "whatsapp";
+  if (value === "queue") return "queue";
+  if (value === "integrations") return "integrations";
   return "outbound";
 }
 
@@ -23,7 +25,11 @@ function finish(request: Request, status: "connected" | "denied" | "error", deta
     ? "/dashboard/email"
     : destination === "whatsapp"
       ? "/dashboard/whatsapp?tab=connection"
-      : "/dashboard/outbound";
+      : destination === "queue"
+        ? "/dashboard/queue"
+        : destination === "integrations"
+          ? "/dashboard/integrations"
+          : "/dashboard/outbound";
   const url = new URL(`${googleOAuthAppBase(request.url)}${target}`);
   url.searchParams.set("gmail", status);
   if (detail) url.searchParams.set("detail", detail.slice(0, 180));

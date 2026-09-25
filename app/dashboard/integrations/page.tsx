@@ -1,10 +1,12 @@
 import Link from "next/link";
 import AdminShell from "../../components/AdminShell";
+import CalendarProfileSettings from "../../components/CalendarProfileSettings";
 import styles from "../AdminModule.module.css";
 import { requireWorkspace } from "@/lib/workspace";
 import { stratoMailStatus } from "@/lib/strato-mail";
 import { getBridgeStatus } from "@/lib/whatsapp/worker-status";
 import { calendarConnected } from "@/lib/whatsapp/calendar";
+import { hasPermission } from "@/lib/team";
 
 export const dynamic = "force-dynamic";
 
@@ -15,11 +17,12 @@ export default async function IntegrationsPage() {
     calendarConnected(workspace.user.id).catch(() => false),
   ]);
   const mail = stratoMailStatus();
+  const canBookMeetings = hasPermission(workspace.role, workspace.permissions, "book_meetings");
   const integrations = [
     { name: "STRATO Mail", ready: mail.configured, detail: "Posteingang, Antworten, Entwürfe und Outbound-Versand über IMAP/SMTP direkt im Growth OS", env: mail.configured ? `${mail.email} · IMAP 993 · SMTP 465` : "STRATO_MAIL_EMAIL + STRATO_MAIL_PASSWORD" },
     { name: "WhatsApp Laptop", ready: bridge.connected, detail: "Baileys-Verbindung für WhatsApp Inbox, Versand, Status-Sync und kontrollierte Automatik", env: bridge.connected ? `Verbunden${bridge.phone ? ` · +${bridge.phone}` : ""}` : "Lokalen JJ-Media Dienst starten" },
     { name: "Lokale Ollama KI", ready: bridge.aiReady, detail: "Open-Source KI für den WhatsApp-Agenten direkt auf dem Laptop", env: bridge.aiReady ? `Ollama · ${bridge.aiModel || "lokales Modell"}` : "INSTALL-WHATSAPP.bat richtet Ollama ein" },
-    { name: "Google Kalender", ready: googleCalendar, detail: "Verfügbarkeit und Terminbuchung für den WhatsApp-Agenten – ohne Gmail-Zugriff", env: googleCalendar ? "Kalender verbunden" : "Optional verbinden" },
+    { name: "Google Kalender", ready: googleCalendar, detail: "Echte freie Zeiten, Google-Meet-Buchungen und Einladungen für Tages-Queue, CRM und WhatsApp", env: googleCalendar ? "Kalender verbunden" : "Optional verbinden" },
     { name: "Microsoft Clarity", ready: Boolean(process.env.CLARITY_API_TOKEN), detail: "Verhaltensdaten, Rage/Dead Clicks, Scrolltiefe und Engagement", env: "CLARITY_API_TOKEN" },
     { name: "Google Search Console", ready: Boolean(process.env.GOOGLE_SEARCH_CONSOLE_SITE_URL), detail: "Rankings, Keywords, Klicks, Impressionen und CTR", env: "GOOGLE_SEARCH_CONSOLE_SITE_URL" },
     { name: "Google Analytics 4", ready: Boolean(process.env.GA4_PROPERTY_ID), detail: "Traffic-Quellen, Kampagnen, Events und Conversion", env: "GA4_PROPERTY_ID" },

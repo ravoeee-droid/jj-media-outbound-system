@@ -14,7 +14,16 @@ export async function GET(request: Request) {
   const origin = googleOAuthAppBase(request.url);
   const url = new URL(request.url);
   const calendar = url.searchParams.get("calendar") === "1";
-  const destination = url.searchParams.get("destination") === "email" ? "email" : calendar ? "whatsapp" : "outbound";
+  const requestedDestination = url.searchParams.get("destination");
+  const destination = requestedDestination === "email"
+    ? "email"
+    : requestedDestination === "queue" && calendar
+      ? "queue"
+      : requestedDestination === "integrations" && calendar
+        ? "integrations"
+        : calendar
+          ? "whatsapp"
+          : "outbound";
   const state = crypto.randomUUID();
   const authorizationUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   authorizationUrl.searchParams.set("client_id", clientId);

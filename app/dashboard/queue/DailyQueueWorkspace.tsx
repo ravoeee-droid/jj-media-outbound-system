@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import MeetingPicker from "@/app/components/MeetingPicker";
 import styles from "./DailyQueueWorkspace.module.css";
 
 type QueueLead = {
@@ -50,6 +51,7 @@ type QueuePayload = {
 type ScheduleMode = "callback" | "meeting" | null;
 type InfoDraft = { subject: string; body: string; previewImageUrl: string; friendlyVideoUrl: string };
 type InfoFallback = { lead: QueueLead; error: string; draft?: InfoDraft };
+type MeetingSuccess = { label: string; joinUrl: string; attendeeInvited: boolean };
 
 function toLocalInput(date: Date) {
   const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
@@ -87,6 +89,8 @@ export default function DailyQueueWorkspace() {
   const [emailCapture, setEmailCapture] = useState(false);
   const [infoEmail, setInfoEmail] = useState("");
   const [scheduleMode, setScheduleMode] = useState<ScheduleMode>(null);
+  const [meetingPicker, setMeetingPicker] = useState(false);
+  const [meetingSuccess, setMeetingSuccess] = useState<MeetingSuccess | null>(null);
   const [scheduleValue, setScheduleValue] = useState(defaultFuture(2));
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -106,6 +110,7 @@ export default function DailyQueueWorkspace() {
       setEmailCapture(false);
       setInfoEmail("");
       setScheduleMode(null);
+      setMeetingPicker(false);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Tages-Queue konnte nicht geladen werden.");
     } finally {
@@ -127,6 +132,7 @@ export default function DailyQueueWorkspace() {
     setEmailCapture(false);
     setInfoEmail("");
     setScheduleMode(null);
+    setMeetingPicker(false);
     void load(value);
   }
 
@@ -427,6 +433,7 @@ export default function DailyQueueWorkspace() {
                     if (current.email) void submitSimple("info_requested");
                     else {
                       setScheduleMode(null);
+      setMeetingPicker(false);
                       setInfoEmail("");
                       setEmailCapture(true);
                     }
@@ -434,7 +441,15 @@ export default function DailyQueueWorkspace() {
                 ><span>✉</span><strong>Info gewünscht</strong><small>{current.email ? "Video + Mail automatisch" : "E-Mail eintragen → automatisch"}</small></button>
                 <button disabled={!callStarted || Boolean(busy) || !data?.permissions.canUseWhatsapp} onClick={() => void submitSimple("whatsapp_requested")}><span>◉</span><strong>WhatsApp</strong><small>Kontakt wünscht WA</small></button>
                 <button disabled={!callStarted || Boolean(busy)} onClick={() => { setScheduleMode("callback"); setScheduleValue(defaultFuture(2)); }}><span>↺</span><strong>Rückruf</strong><small>Zeit festlegen</small></button>
-                <button disabled={!callStarted || Boolean(busy) || !data?.permissions.canBookMeetings} onClick={() => { setScheduleMode("meeting"); setScheduleValue(defaultFuture(24)); }}><span>◷</span><strong>Termin</strong><small>Datum eintragen</small></button>
+                <button
+                  disabled={!callStarted || Boolean(busy) || !data?.permissions.canBookMeetings}
+                  onClick={() => {
+                    setEmailCapture(false);
+                    setScheduleMode(null);
+                    setMeetingSuccess(null);
+                    setMeetingPicker(true);
+                  }}
+                ><span>◷</span><strong>Termin</strong><small>Freie Zeiten anzeigen</small></button>
                 <button className={styles.danger} disabled={!callStarted || Boolean(busy)} onClick={() => void submitSimple("no_interest")}><span>×</span><strong>Kein Interesse</strong><small>Kontakt stoppen</small></button>
               </div>
             </section>
@@ -456,6 +471,30 @@ export default function DailyQueueWorkspace() {
                 <button type="submit" disabled={Boolean(busy)}>Speichern</button>
                 <button type="button" onClick={() => setEmailCapture(false)}>Abbrechen</button>
               </form>
+            )}
+
+            {meetingPicker && current && (
+              <MeetingPicker
+                leadId={current.id}
+                onBooked={(booking) => {
+                  setMeetingPicker(false);
+                  setMeetingSuccess({
+                    label: booking.label,
+                    joinUrl: booking.joinUrl,
+                    attendeeInvited: booking.attendeeInvited,
+                  });
+                  setMessage(booking.attendeeInvited
+                    ? "Google Meet gebucht. Der Kontakt hat die Kalendereinladung erhalten."
+                    : "Google Meet gebucht. Für den Kontakt fehlt eine E-Mail; den Meet-Link kannst du unten kopieren.");
+                  void load(ownerId, true);
+                }}
+                onManual={() => {
+                  setMeetingPicker(false);
+                  setScheduleMode("meeting");
+                  setScheduleValue(defaultFuture(24));
+                }}
+                onCancel={() => setMeetingPicker(false)}
+              />
             )}
 
             {scheduleMode && (
@@ -496,6 +535,17 @@ export default function DailyQueueWorkspace() {
             </div>
           </aside>
         </div>
+      )}
+
+      {meetingSuccess && (
+        <section className={styles.meetingSuccess}>
+          <div><small>TERMIN GEBUCHT</small><strong>{meetingSuccess.label}</strong><span>{meetingSuccess.attendeeInvited ? "Kalendereinladung wurde an den Kontakt gesendet." : "Kontakt hat keine E-Mail im CRM – Meet-Link bei Bedarf manuell senden."}</span></div>
+          <div>
+            <a href={meetingSuccess.joinUrl} target="_blank" rel="noreferrer">Google Meet ↗</a>
+            <button type="button" onClick={() => void navigator.clipboard.writeText(meetingSuccess.joinUrl)}>Meet-Link kopieren</button>
+            <button type="button" onClick={() => setMeetingSuccess(null)}>Schließen</button>
+          </div>
+        </section>
       )}
 
       {infoProgress && <div className={styles.infoProgress}><i /><span>{infoProgress}</span></div>}

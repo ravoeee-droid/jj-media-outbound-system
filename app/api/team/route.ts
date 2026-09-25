@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db";
-import { leads, tasks, users, workspaceMembers } from "@/db/schema";
+import { accounts, leads, tasks, users, workspaceMembers } from "@/db/schema";
 import { hashPassword } from "@/lib/password-auth";
 import {
   PERMISSION_LABELS,
@@ -51,9 +51,11 @@ export async function GET() {
           createdAt: users.createdAt,
           role: workspaceMembers.role,
           permissions: workspaceMembers.permissions,
+          googleScope: accounts.scope,
         })
         .from(workspaceMembers)
         .innerJoin(users, eq(users.id, workspaceMembers.userId))
+        .leftJoin(accounts, and(eq(accounts.userId, users.id), eq(accounts.provider, "google")))
         .where(eq(workspaceMembers.workspaceId, workspace.workspaceId)),
       db.select({ ownerId: leads.ownerId }).from(leads).where(eq(leads.workspaceId, workspace.workspaceId)),
       db
@@ -83,6 +85,10 @@ export async function GET() {
           leadCount: leadCounts.get(row.userId) ?? 0,
           openTaskCount: taskCounts.get(row.userId) ?? 0,
           isCurrentUser: row.userId === workspace.user.id,
+          calendarConnected: Boolean(
+            row.googleScope?.includes("https://www.googleapis.com/auth/calendar.events")
+            && row.googleScope?.includes("https://www.googleapis.com/auth/calendar.freebusy")
+          ),
         };
       })
       .sort((a, b) => {

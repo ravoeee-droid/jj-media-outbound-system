@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
+import MeetingPicker from "./MeetingPicker";
 import styles from "./LeadCrmPanel.module.css";
 
 type LeadDetail = {
@@ -139,6 +140,7 @@ export default function LeadCrmPanel({
   const [busyAction, setBusyAction] = useState("");
   const [message, setMessage] = useState("");
   const [scheduleMode, setScheduleMode] = useState<"callback" | "meeting" | null>(null);
+  const [meetingPicker, setMeetingPicker] = useState(false);
   const [scheduleValue, setScheduleValue] = useState(defaultFuture(2));
   const [emailDraft, setEmailDraft] = useState<EmailDraft | null>(null);
 
@@ -471,12 +473,38 @@ export default function LeadCrmPanel({
             <ActionButton icon="▶" title="Video" note={lead.videoStatus === "ready" ? "Neu rendern" : "Persönlich rendern"} disabled={!permissions.canGenerateVideo || !lead.instagramUrl} busy={busyAction === "video"} onClick={() => void generateVideo()} />
             <ActionButton icon="✉" title="Info-Mail" note={lead.email || "E-Mail fehlt"} disabled={!permissions.canSendEmail || !lead.email || !canContact} busy={busyAction === "email"} onClick={() => void prepareEmail()} />
             <ActionButton icon="↺" title="Rückruf" note={lead.nextActionAt ? displayDate(lead.nextActionAt) : "Zeit festlegen"} disabled={!permissions.canManageLeads || !canContact} onClick={() => { setScheduleMode("callback"); setScheduleValue(defaultFuture(2)); }} />
-            <ActionButton icon="◷" title="Termin" note="Manuell eintragen" disabled={!permissions.canBookMeetings || !canContact} onClick={() => { setScheduleMode("meeting"); setScheduleValue(defaultFuture(24)); }} />
+            <ActionButton icon="◷" title="Termin" note="Freie Zeiten laden" disabled={!permissions.canBookMeetings || !canContact} onClick={() => { setScheduleMode(null); setMeetingPicker(true); }} />
           </div>
+
+          {meetingPicker && (
+            <MeetingPicker
+              leadId={lead.id}
+              onBooked={(booking) => {
+                setMeetingPicker(false);
+                onUpdated({
+                  id: lead.id,
+                  pipelineStage: "call_booked",
+                  callStatus: "completed",
+                  nextAction: "meeting",
+                  nextActionAt: booking.start,
+                });
+                setMessage(booking.attendeeInvited
+                  ? "Google Meet gebucht und Kalendereinladung an den Kontakt gesendet."
+                  : "Google Meet gebucht. Für den Kontakt fehlt eine E-Mail; Meet-Link liegt in der Aktivität.");
+                void loadDetails(true);
+              }}
+              onManual={() => {
+                setMeetingPicker(false);
+                setScheduleMode("meeting");
+                setScheduleValue(defaultFuture(24));
+              }}
+              onCancel={() => setMeetingPicker(false)}
+            />
+          )}
 
           {scheduleMode && (
             <form className={styles.scheduleBox} onSubmit={schedule}>
-              <div><strong>{scheduleMode === "callback" ? "Rückruf planen" : "Termin eintragen"}</strong><small>{scheduleMode === "meeting" ? "Der echte Google-Calendar-Flow kommt später; dieser Schritt dokumentiert den Termin bereits sauber im CRM." : "Die Aufgabe landet beim Lead-Owner."}</small></div>
+              <div><strong>{scheduleMode === "callback" ? "Rückruf planen" : "Termin manuell eintragen"}</strong><small>{scheduleMode === "meeting" ? "Fallback ohne Google-Kalender: der Termin wird nur im CRM dokumentiert." : "Die Aufgabe landet beim Lead-Owner."}</small></div>
               <input type="datetime-local" value={scheduleValue} onChange={(event) => setScheduleValue(event.target.value)} required />
               <button type="button" onClick={() => setScheduleMode(null)}>Abbrechen</button>
               <button className={styles.darkButton} disabled={busyAction === scheduleMode}>{busyAction === scheduleMode ? "Speichert …" : "Speichern"}</button>

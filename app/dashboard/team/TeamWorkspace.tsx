@@ -15,6 +15,7 @@ type Member = {
   permissions: string[];
   leadCount: number;
   openTaskCount: number;
+  calendarConnected?: boolean;
   isCurrentUser?: boolean;
 };
 
@@ -180,7 +181,7 @@ export default function TeamWorkspace() {
             <article className={styles.member + (member.status === "inactive" ? " " + styles.inactive : "")} key={member.userId}>
               <div className={styles.identity}>
                 <span className={styles.avatar}>{initials(member.name, member.email)}</span>
-                <div><div className={styles.nameLine}><strong>{member.name || member.email}</strong>{member.isCurrentUser && <em>DU</em>}</div><small>{member.email}</small><span>{formatLastLogin(member.lastLoginAt)}</span></div>
+                <div><div className={styles.nameLine}><strong>{member.name || member.email}</strong>{member.isCurrentUser && <em>DU</em>}</div><small>{member.email}</small><span>{formatLastLogin(member.lastLoginAt)} · {member.calendarConnected ? "Kalender verbunden" : "Kalender offen"}</span></div>
               </div>
               <div className={styles.stats}><div><strong>{member.leadCount}</strong><span>Leads</span></div><div><strong>{member.openTaskCount}</strong><span>Aufgaben</span></div></div>
               <div className={styles.role}><span>{roleLabel}</span><small>{member.status === "active" ? "Aktiv" : "Deaktiviert"}</small></div>
