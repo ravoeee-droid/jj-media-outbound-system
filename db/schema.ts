@@ -225,6 +225,7 @@ export const tasks = pgTable(
   (table) => [
     index("tasks_workspace_due_idx").on(table.workspaceId, table.status, table.dueAt),
     index("tasks_assignee_idx").on(table.workspaceId, table.assigneeId, table.status, table.dueAt),
+    index("tasks_assignee_user_idx").on(table.assigneeId),
   ],
 );
 

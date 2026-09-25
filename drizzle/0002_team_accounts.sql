@@ -37,3 +37,5 @@ BEGIN
 END $$;
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "tasks_assignee_idx" ON "tasks" USING btree ("workspace_id","assignee_id","status","due_at");
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "tasks_assignee_user_idx" ON "tasks" USING btree ("assignee_id");

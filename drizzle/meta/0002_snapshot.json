@@ -1923,6 +1923,21 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "tasks_assignee_user_idx": {
+          "name": "tasks_assignee_user_idx",
+          "columns": [
+            {
+              "expression": "assignee_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
