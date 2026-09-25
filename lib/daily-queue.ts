@@ -47,6 +47,7 @@ export async function getDailyQueue(workspaceId: string, ownerId: string, limit 
   const rowsPromise = db
     .select({
       id: leads.id,
+      slug: leads.slug,
       company: leads.company,
       contact: leads.contact,
       ceo: leads.ceo,
@@ -64,6 +65,7 @@ export async function getDailyQueue(workspaceId: string, ownerId: string, limit 
       callStatus: leads.callStatus,
       emailStatus: leads.emailStatus,
       whatsappStatus: leads.whatsappStatus,
+      videoStatus: leads.videoStatus,
       nextAction: leads.nextAction,
       nextActionAt: leads.nextActionAt,
       salesPriority: leads.salesPriority,
