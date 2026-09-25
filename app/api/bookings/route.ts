@@ -3,6 +3,7 @@ import { z } from "zod";
 import { assertDatabaseConfigured, getDb } from "@/db";
 import { bookings, events, leads } from "@/db/schema";
 import { sendTelegramMessage } from "@/lib/telegram";
+import { cancelPendingEmailFollowups } from "@/lib/outreach-lifecycle";
 
 const bookingInput = z.object({
   slug: z.string().trim().min(2).max(250),
@@ -21,6 +22,7 @@ export async function POST(request: Request) {
     await Promise.all([
       db.update(leads).set({ pipelineStage: "call_booked", probability: Math.max(lead.probability, 60), lastActivityAt: new Date(), updatedAt: new Date() }).where(eq(leads.id, lead.id)),
       db.insert(events).values({ leadId: lead.id, type: "booking", metadata: { bookingId: booking.id } }),
+      cancelPendingEmailFollowups({ workspaceId: lead.workspaceId, leadId: lead.id, reason: "Termin über die persönliche Landingpage gebucht." }),
     ]);
 
     const publicBaseUrl = (process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_APP_URL || process.env.NEXTAUTH_URL || process.env.AUTH_URL || new URL(request.url).origin).replace(/\/$/, "").replace(/\/admin$/, "");
