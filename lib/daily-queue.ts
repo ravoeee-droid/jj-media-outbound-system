@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, lte, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
-import { activities, leads } from "@/db/schema";
+import { activities, leads, tasks } from "@/db/schema";
 
 export type QueueOutcome = "no_answer" | "info_requested" | "whatsapp_requested";
 
@@ -109,8 +109,12 @@ async function getLead(context: QueueContext) {
       id: leads.id,
       ownerId: leads.ownerId,
       company: leads.company,
+      email: leads.email,
+      phone: leads.phone,
       contactLocked: leads.contactLocked,
       pipelineStage: leads.pipelineStage,
+      nextAction: leads.nextAction,
+      nextActionAt: leads.nextActionAt,
     })
     .from(leads)
     .where(and(eq(leads.workspaceId, context.workspaceId), eq(leads.id, context.leadId)))
@@ -121,10 +125,84 @@ async function getLead(context: QueueContext) {
   return lead;
 }
 
-export async function recordQueueOutcome(context: QueueContext, outcome: QueueOutcome) {
+export async function assertLeadInDailyQueue(workspaceId: string, leadId: string) {
+  const [lead] = await getDb()
+    .select({ id: leads.id, ownerId: leads.ownerId })
+    .from(leads)
+    .where(and(eq(leads.workspaceId, workspaceId), eq(leads.id, leadId)))
+    .limit(1);
+  if (!lead?.ownerId) throw new Error("Dieser Lead gehört aktuell zu keiner Tages-Queue.");
+
+  const [eligible] = await getDb()
+    .select({ id: leads.id })
+    .from(leads)
+    .where(and(queueEligibility(workspaceId, lead.ownerId), eq(leads.id, leadId)))
+    .limit(1);
+  if (!eligible) throw new Error("Dieser Lead ist nicht mehr in der aktuellen Tages-Queue. Bitte die Queue neu laden.");
+  return lead;
+}
+
+async function completeOpenCallbackTask(workspaceId: string, leadId: string) {
+  await getDb()
+    .update(tasks)
+    .set({ status: "done", updatedAt: new Date() })
+    .where(and(
+      eq(tasks.workspaceId, workspaceId),
+      eq(tasks.leadId, leadId),
+      eq(tasks.type, "callback"),
+      eq(tasks.status, "open"),
+    ));
+}
+
+async function upsertFollowUpTask(args: {
+  workspaceId: string;
+  leadId: string;
+  assigneeId: string;
+  type: string;
+  title: string;
+  priority?: string;
+}) {
+  const db = getDb();
+  const [existing] = await db
+    .select({ id: tasks.id })
+    .from(tasks)
+    .where(and(
+      eq(tasks.workspaceId, args.workspaceId),
+      eq(tasks.leadId, args.leadId),
+      eq(tasks.type, args.type),
+      eq(tasks.status, "open"),
+    ))
+    .limit(1);
+
+  if (existing) {
+    await db.update(tasks).set({
+      assigneeId: args.assigneeId,
+      title: args.title,
+      dueAt: new Date(),
+      priority: args.priority || "high",
+      updatedAt: new Date(),
+    }).where(eq(tasks.id, existing.id));
+    return;
+  }
+
+  await db.insert(tasks).values({
+    workspaceId: args.workspaceId,
+    leadId: args.leadId,
+    assigneeId: args.assigneeId,
+    title: args.title,
+    dueAt: new Date(),
+    status: "open",
+    priority: args.priority || "high",
+    type: args.type,
+  });
+}
+
+export async function recordQueueOutcome(context: QueueContext, outcome: QueueOutcome, options: { email?: string } = {}) {
   const db = getDb();
   const lead = await getLead(context);
   const now = new Date();
+  const suppliedEmail = options.email?.trim().toLowerCase() || "";
+  const email = suppliedEmail || lead.email;
 
   const values: Partial<typeof leads.$inferInsert> = {
     lastActivityAt: now,
@@ -148,10 +226,11 @@ export async function recordQueueOutcome(context: QueueContext, outcome: QueueOu
     };
   } else if (outcome === "info_requested") {
     Object.assign(values, {
+      ...(suppliedEmail ? { email: suppliedEmail } : {}),
       pipelineStage: "contacted",
       callStatus: "connected",
-      emailStatus: "ready",
-      nextAction: "send_info",
+      emailStatus: email ? "ready" : "needs_email",
+      nextAction: email ? "send_info" : "collect_email",
       nextActionAt: null,
       lastContactAt: now,
     });
@@ -161,7 +240,9 @@ export async function recordQueueOutcome(context: QueueContext, outcome: QueueOu
       userId: context.userId,
       type: "call_info_requested",
       title: "Info gewünscht",
-      detail: "Nächster Schritt: persönliche Info-Mail vorbereiten und senden.",
+      detail: email
+        ? "Nächster Schritt: persönliche Info-Mail vorbereiten und senden."
+        : "E-Mail-Adresse fehlt noch; zuerst Kontaktadresse ergänzen.",
     };
   } else {
     Object.assign(values, {
@@ -197,5 +278,27 @@ export async function recordQueueOutcome(context: QueueContext, outcome: QueueOu
     });
 
   await db.insert(activities).values(activity);
+  await completeOpenCallbackTask(context.workspaceId, lead.id);
+
+  const assigneeId = lead.ownerId || context.userId;
+  if (outcome === "info_requested") {
+    await upsertFollowUpTask({
+      workspaceId: context.workspaceId,
+      leadId: lead.id,
+      assigneeId,
+      type: "send_info",
+      title: email ? "Info-Mail senden: " + lead.company : "E-Mail erfragen + Info senden: " + lead.company,
+    });
+  }
+  if (outcome === "whatsapp_requested") {
+    await upsertFollowUpTask({
+      workspaceId: context.workspaceId,
+      leadId: lead.id,
+      assigneeId,
+      type: "whatsapp_followup",
+      title: "WhatsApp senden: " + lead.company,
+    });
+  }
+
   return updated;
 }

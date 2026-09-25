@@ -156,14 +156,23 @@ export async function scheduleManualMeeting(context: Context, scheduledAt: Date)
     updatedAt: new Date(),
   }).where(eq(leads.id, lead.id)).returning();
 
-  await db.insert(activities).values({
-    workspaceId: context.workspaceId,
-    leadId: lead.id,
-    userId: context.userId,
-    type: "meeting_scheduled",
-    title: "Termin manuell eingetragen",
-    detail: scheduledAt.toISOString(),
-  });
+  await Promise.all([
+    db.insert(activities).values({
+      workspaceId: context.workspaceId,
+      leadId: lead.id,
+      userId: context.userId,
+      type: "meeting_scheduled",
+      title: "Termin manuell eingetragen",
+      detail: scheduledAt.toISOString(),
+    }),
+    db.update(tasks).set({ status: "done", updatedAt: new Date() })
+      .where(and(
+        eq(tasks.workspaceId, context.workspaceId),
+        eq(tasks.leadId, lead.id),
+        eq(tasks.type, "callback"),
+        eq(tasks.status, "open"),
+      )),
+  ]);
 
   return { lead: updated, booking };
 }

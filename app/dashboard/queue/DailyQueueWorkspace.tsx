@@ -80,6 +80,8 @@ export default function DailyQueueWorkspace() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [callStarted, setCallStarted] = useState(false);
+  const [emailCapture, setEmailCapture] = useState(false);
+  const [infoEmail, setInfoEmail] = useState("");
   const [scheduleMode, setScheduleMode] = useState<ScheduleMode>(null);
   const [scheduleValue, setScheduleValue] = useState(defaultFuture(2));
   const [message, setMessage] = useState("");
@@ -95,6 +97,8 @@ export default function DailyQueueWorkspace() {
       setData(payload);
       if (selectedOwner === "mine") setOwnerId(payload.ownerId);
       setCallStarted(false);
+      setEmailCapture(false);
+      setInfoEmail("");
       setScheduleMode(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Tages-Queue konnte nicht geladen werden.");
@@ -114,6 +118,8 @@ export default function DailyQueueWorkspace() {
     setOwnerId(value);
     setMessage("");
     setCallStarted(false);
+    setEmailCapture(false);
+    setInfoEmail("");
     setScheduleMode(null);
     void load(value);
   }
@@ -124,10 +130,10 @@ export default function DailyQueueWorkspace() {
     window.location.href = phoneHref(current.phone);
   }
 
-  async function submitSimple(action: "no_answer" | "info_requested" | "whatsapp_requested" | "no_interest") {
+  async function submitSimple(action: "no_answer" | "info_requested" | "whatsapp_requested" | "no_interest", email?: string) {
     if (!current || busy) return;
-    if (action === "info_requested" && !current.email) {
-      setError("Für „Info gewünscht“ fehlt noch die E-Mail-Adresse. Bitte zuerst in der Lead-Akte ergänzen.");
+    if (action === "info_requested" && !data?.permissions.canSendEmail) {
+      setError("Für diesen Zugang ist E-Mail nicht freigegeben.");
       return;
     }
     if (action === "whatsapp_requested" && !data?.permissions.canUseWhatsapp) {
@@ -142,7 +148,7 @@ export default function DailyQueueWorkspace() {
       const response = await fetch("/api/daily-queue", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action, leadId: current.id }),
+        body: JSON.stringify({ action, leadId: current.id, ...(action === "info_requested" && email ? { email } : {}) }),
       });
       const result = await response.json() as { error?: string };
       if (!response.ok) throw new Error(result.error || "Call-Ergebnis konnte nicht gespeichert werden.");
@@ -159,6 +165,21 @@ export default function DailyQueueWorkspace() {
     } finally {
       setBusy("");
     }
+  }
+
+  async function submitInfoEmail(event: FormEvent) {
+    event.preventDefault();
+    const email = infoEmail.trim();
+    if (!email) {
+      setError("Bitte die E-Mail-Adresse eintragen.");
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setError("Bitte eine gültige E-Mail-Adresse eintragen.");
+      return;
+    }
+    setEmailCapture(false);
+    await submitSimple("info_requested", email);
   }
 
   async function submitSchedule(event: FormEvent) {
@@ -301,13 +322,42 @@ export default function DailyQueueWorkspace() {
               </div>
               <div className={styles.outcomeGrid}>
                 <button disabled={!callStarted || Boolean(busy)} onClick={() => void submitSimple("no_answer")}><span>○</span><strong>Nicht erreicht</strong><small>morgen erneut</small></button>
-                <button disabled={!callStarted || Boolean(busy) || !current.email} onClick={() => void submitSimple("info_requested")}><span>✉</span><strong>Info gewünscht</strong><small>{current.email ? "Mail als nächstes" : "E-Mail fehlt"}</small></button>
+                <button
+                  disabled={!callStarted || Boolean(busy) || !data?.permissions.canSendEmail}
+                  onClick={() => {
+                    if (current.email) void submitSimple("info_requested");
+                    else {
+                      setScheduleMode(null);
+                      setInfoEmail("");
+                      setEmailCapture(true);
+                    }
+                  }}
+                ><span>✉</span><strong>Info gewünscht</strong><small>{current.email ? "Mail als nächstes" : "E-Mail direkt eintragen"}</small></button>
                 <button disabled={!callStarted || Boolean(busy) || !data?.permissions.canUseWhatsapp} onClick={() => void submitSimple("whatsapp_requested")}><span>◉</span><strong>WhatsApp</strong><small>Kontakt wünscht WA</small></button>
                 <button disabled={!callStarted || Boolean(busy)} onClick={() => { setScheduleMode("callback"); setScheduleValue(defaultFuture(2)); }}><span>↺</span><strong>Rückruf</strong><small>Zeit festlegen</small></button>
                 <button disabled={!callStarted || Boolean(busy) || !data?.permissions.canBookMeetings} onClick={() => { setScheduleMode("meeting"); setScheduleValue(defaultFuture(24)); }}><span>◷</span><strong>Termin</strong><small>Datum eintragen</small></button>
                 <button className={styles.danger} disabled={!callStarted || Boolean(busy)} onClick={() => void submitSimple("no_interest")}><span>×</span><strong>Kein Interesse</strong><small>Kontakt stoppen</small></button>
               </div>
             </section>
+
+            {emailCapture && (
+              <form className={styles.schedule} onSubmit={submitInfoEmail}>
+                <div>
+                  <strong>Welche E-Mail-Adresse hat der Kontakt genannt?</strong>
+                  <small>Sie wird direkt am Lead gespeichert und der Folgeauftrag „Info-Mail senden“ angelegt.</small>
+                </div>
+                <input
+                  type="email"
+                  value={infoEmail}
+                  onChange={(event) => setInfoEmail(event.target.value)}
+                  placeholder="name@unternehmen.de"
+                  autoFocus
+                  required
+                />
+                <button type="submit" disabled={Boolean(busy)}>Speichern</button>
+                <button type="button" onClick={() => setEmailCapture(false)}>Abbrechen</button>
+              </form>
+            )}
 
             {scheduleMode && (
               <form className={styles.schedule} onSubmit={submitSchedule}>

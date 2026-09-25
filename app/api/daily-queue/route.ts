@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db";
 import { leads, users, workspaceMembers } from "@/db/schema";
-import { getDailyQueue, recordQueueOutcome } from "@/lib/daily-queue";
+import { assertLeadInDailyQueue, getDailyQueue, recordQueueOutcome } from "@/lib/daily-queue";
 import { markNoInterest, scheduleCallback, scheduleManualMeeting } from "@/lib/lead-workflow";
 import { hasPermission } from "@/lib/team";
 import { apiError, requirePermission } from "@/lib/workspace";
@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 
 const actionInput = z.discriminatedUnion("action", [
   z.object({ action: z.literal("no_answer"), leadId: z.string().uuid() }),
-  z.object({ action: z.literal("info_requested"), leadId: z.string().uuid() }),
+  z.object({ action: z.literal("info_requested"), leadId: z.string().uuid(), email: z.string().trim().email().max(320).optional() }),
   z.object({ action: z.literal("whatsapp_requested"), leadId: z.string().uuid() }),
   z.object({ action: z.literal("callback"), leadId: z.string().uuid(), dueAt: z.string().datetime() }),
   z.object({ action: z.literal("meeting"), leadId: z.string().uuid(), scheduledAt: z.string().datetime() }),
@@ -110,6 +110,7 @@ export async function POST(request: Request) {
     const workspace = await requirePermission("manage_leads");
     const input = actionInput.parse(await request.json());
     await assertLeadAccess(workspace, input.leadId);
+    await assertLeadInDailyQueue(workspace.workspaceId, input.leadId);
     const base = { workspaceId: workspace.workspaceId, userId: workspace.user.id, leadId: input.leadId };
 
     if (input.action === "info_requested" && !hasPermission(workspace.role, workspace.permissions, "send_email")) {
@@ -118,8 +119,11 @@ export async function POST(request: Request) {
     if (input.action === "whatsapp_requested" && !hasPermission(workspace.role, workspace.permissions, "use_whatsapp")) {
       throw new Error("FORBIDDEN");
     }
-    if (input.action === "no_answer" || input.action === "info_requested" || input.action === "whatsapp_requested") {
+    if (input.action === "no_answer" || input.action === "whatsapp_requested") {
       return Response.json({ lead: await recordQueueOutcome(base, input.action) });
+    }
+    if (input.action === "info_requested") {
+      return Response.json({ lead: await recordQueueOutcome(base, input.action, { email: input.email }) });
     }
 
     if (input.action === "callback") {
@@ -143,6 +147,12 @@ export async function POST(request: Request) {
   } catch (error) {
     if (error instanceof z.ZodError) {
       return Response.json({ error: "Call-Ergebnis ist unvollständig.", issues: error.issues }, { status: 400 });
+    }
+    if (error instanceof Error && (
+      error.message.includes("nicht mehr in der aktuellen Tages-Queue")
+      || error.message.includes("gehört aktuell zu keiner Tages-Queue")
+    )) {
+      return Response.json({ error: error.message }, { status: 409 });
     }
     return apiError(error);
   }
