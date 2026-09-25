@@ -2,11 +2,13 @@ import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db";
 import { leads, tasks } from "@/db/schema";
+import { hasPermission } from "@/lib/team";
 import { apiError, requireWorkspace } from "@/lib/workspace";
 
 export async function GET() {
   try {
-    const { workspaceId } = await requireWorkspace();
+    const workspace = await requireWorkspace();
+    const { workspaceId } = workspace;
     const rows = await getDb()
       .select({
         id: tasks.id,
@@ -21,7 +23,10 @@ export async function GET() {
       })
       .from(tasks)
       .leftJoin(leads, eq(tasks.leadId, leads.id))
-      .where(eq(tasks.workspaceId, workspaceId))
+      .where(and(
+        eq(tasks.workspaceId, workspaceId),
+        ...(hasPermission(workspace.role, workspace.permissions, "view_all_leads") ? [] : [eq(tasks.assigneeId, workspace.user.id)]),
+      ))
       .orderBy(asc(tasks.dueAt))
       .limit(500);
     return Response.json({ tasks: rows });
@@ -40,8 +45,12 @@ const taskUpdate = z.object({
 
 export async function PUT(request: Request) {
   try {
-    const { workspaceId } = await requireWorkspace();
+    const workspace = await requireWorkspace();
+    const { workspaceId } = workspace;
     const input = taskUpdate.parse(await request.json());
+    if (input.assigneeId !== undefined && !hasPermission(workspace.role, workspace.permissions, "view_all_leads")) throw new Error("FORBIDDEN");
+    const filters = [eq(tasks.id, input.id), eq(tasks.workspaceId, workspaceId)];
+    if (!hasPermission(workspace.role, workspace.permissions, "view_all_leads")) filters.push(eq(tasks.assigneeId, workspace.user.id));
     const [task] = await getDb()
       .update(tasks)
       .set({
@@ -49,7 +58,7 @@ export async function PUT(request: Request) {
         ...(input.assigneeId !== undefined ? { assigneeId: input.assigneeId } : {}),
         updatedAt: new Date(),
       })
-      .where(and(eq(tasks.id, input.id), eq(tasks.workspaceId, workspaceId)))
+      .where(and(...filters))
       .returning();
     if (!task) return Response.json({ error: "Aufgabe nicht gefunden." }, { status: 404 });
     return Response.json({ task });

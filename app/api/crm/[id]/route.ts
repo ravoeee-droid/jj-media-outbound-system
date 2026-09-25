@@ -2,11 +2,16 @@ import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db";
 import { activities, bookings, events, leads, outreach, tasks } from "@/db/schema";
+import { hasPermission } from "@/lib/team";
 import { apiError, requireWorkspace } from "@/lib/workspace";
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const { workspaceId } = await requireWorkspace();
+    const workspace = await requireWorkspace();
+    if (!hasPermission(workspace.role, workspace.permissions, "view_own_leads") && !hasPermission(workspace.role, workspace.permissions, "view_all_leads")) {
+      throw new Error("FORBIDDEN");
+    }
+    const { workspaceId } = workspace;
     const { id } = await context.params;
     const db = getDb();
     const [lead] = await db
@@ -15,6 +20,9 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
       .where(and(eq(leads.id, id), eq(leads.workspaceId, workspaceId)))
       .limit(1);
     if (!lead) return Response.json({ error: "Lead nicht gefunden." }, { status: 404 });
+    if (!hasPermission(workspace.role, workspace.permissions, "view_all_leads") && lead.ownerId !== workspace.user.id) {
+      throw new Error("FORBIDDEN");
+    }
     const [activityRows, taskRows, outreachRows, eventRows, bookingRows] = await Promise.all([
       db.select().from(activities).where(eq(activities.leadId, id)).orderBy(desc(activities.createdAt)).limit(100),
       db.select().from(tasks).where(eq(tasks.leadId, id)).orderBy(desc(tasks.createdAt)).limit(50),
@@ -44,14 +52,18 @@ const activityInput = z.object({
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
     const workspace = await requireWorkspace();
+    if (!hasPermission(workspace.role, workspace.permissions, "manage_leads")) throw new Error("FORBIDDEN");
     const { id } = await context.params;
     const input = activityInput.parse(await request.json());
     const [lead] = await getDb()
-      .select({ id: leads.id })
+      .select({ id: leads.id, ownerId: leads.ownerId })
       .from(leads)
       .where(and(eq(leads.id, id), eq(leads.workspaceId, workspace.workspaceId)))
       .limit(1);
     if (!lead) return Response.json({ error: "Lead nicht gefunden." }, { status: 404 });
+    if (!hasPermission(workspace.role, workspace.permissions, "view_all_leads") && lead.ownerId !== workspace.user.id) {
+      throw new Error("FORBIDDEN");
+    }
     const [activity] = await getDb()
       .insert(activities)
       .values({

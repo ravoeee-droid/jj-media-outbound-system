@@ -182,6 +182,8 @@ export const leads = pgTable(
     index("leads_workspace_idx").on(table.workspaceId),
     index("leads_pipeline_idx").on(table.workspaceId, table.pipelineStage),
     index("leads_owner_idx").on(table.workspaceId, table.ownerId),
+    index("leads_crm_updated_idx").on(table.workspaceId, table.updatedAt),
+    index("leads_crm_owner_updated_idx").on(table.workspaceId, table.ownerId, table.updatedAt),
     index("leads_owner_user_idx").on(table.ownerId),
     index("leads_created_by_idx").on(table.createdById),
     index("leads_next_action_idx").on(table.workspaceId, table.nextActionAt),

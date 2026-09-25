@@ -10,6 +10,7 @@ type LeadDetail = {
   contact: string;
   email: string;
   phone: string;
+  instagramUrl: string;
   websiteUrl: string;
   pipelineStage: string;
   notes: string;
@@ -153,7 +154,7 @@ export default function LeadCrmPanel({
             <div className="crm-hero">
               <p className="eyebrow eyebrow--orange">360° Lead-Akte</p>
               <h2>{lead.company}</h2>
-              <a href={lead.websiteUrl} target="_blank" rel="noreferrer">{lead.websiteUrl || "Instagram-Profil fehlt"}</a>
+              <a href={lead.instagramUrl || lead.websiteUrl} target="_blank" rel="noreferrer">{lead.instagramUrl || lead.websiteUrl || "Profil fehlt"}</a>
             </div>
 
             <div className="crm-score-grid">

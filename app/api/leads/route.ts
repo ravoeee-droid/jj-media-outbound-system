@@ -4,6 +4,7 @@ import { getDb } from "@/db";
 import { activities, leads } from "@/db/schema";
 import { domainFromUrl, normalizeCompany, normalizeWebsite, slugify } from "@/lib/leads";
 import { normalizeInstagramProfile } from "@/lib/social-profile";
+import { hasPermission } from "@/lib/team";
 import { apiError, requireWorkspace } from "@/lib/workspace";
 
 export const runtime = "nodejs";
@@ -22,11 +23,18 @@ const leadInput = z.object({
 
 export async function GET(request: Request) {
   try {
-    const { workspaceId } = await requireWorkspace();
+    const workspace = await requireWorkspace();
+    if (!hasPermission(workspace.role, workspace.permissions, "view_own_leads") && !hasPermission(workspace.role, workspace.permissions, "view_all_leads")) {
+      throw new Error("FORBIDDEN");
+    }
+    const { workspaceId } = workspace;
     const url = new URL(request.url);
     const search = url.searchParams.get("search")?.trim() ?? "";
     const stage = url.searchParams.get("stage")?.trim() ?? "";
     const filters = [eq(leads.workspaceId, workspaceId)];
+    if (!hasPermission(workspace.role, workspace.permissions, "view_all_leads")) {
+      filters.push(eq(leads.ownerId, workspace.user.id));
+    }
     if (stage && stage !== "all") filters.push(eq(leads.pipelineStage, stage));
     if (search) {
       const searchFilter = or(
@@ -52,6 +60,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const workspace = await requireWorkspace();
+    if (!hasPermission(workspace.role, workspace.permissions, "manage_leads")) throw new Error("FORBIDDEN");
     const input = leadInput.parse(await request.json());
     const normalizedCompany = normalizeCompany(input.company);
     const legacyProfile = !input.instagramUrl && (/instagram\.com/i.test(input.websiteUrl) || input.websiteUrl.startsWith("@"))
