@@ -318,6 +318,8 @@ export async function commitLeadIntake(options: {
   if (!candidates.length) return {
     created: 0,
     updated: 0,
+    createdLeadIds: [] as string[],
+    updatedLeadIds: [] as string[],
     leadIds: [] as string[],
     committed: [] as Array<{ intakeId: string; leadId: string; candidateIds: string[] }>,
     alreadyPresent,
@@ -329,6 +331,8 @@ export async function commitLeadIntake(options: {
   const updateInputs = candidates.filter((item) => item.existing);
   const leadIds: string[] = [];
   const committed: Array<{ intakeId: string; leadId: string; candidateIds: string[] }> = [];
+  const createdLeadIds: string[] = [];
+  const updatedLeadIds: string[] = [];
   let createdCount = 0;
   let updatedCount = 0;
 
@@ -381,6 +385,7 @@ export async function commitLeadIntake(options: {
       normalizedCompany: leads.normalizedCompany,
     });
     leadIds.push(...created.map((row) => row.id));
+    createdLeadIds.push(...created.map((row) => row.id));
     createdCount = created.length;
 
     const createdInputByCompany = new Map(
@@ -416,6 +421,7 @@ export async function commitLeadIntake(options: {
       .returning({ id: leads.id });
     if (!updated) continue;
     leadIds.push(updated.id);
+    updatedLeadIds.push(updated.id);
     updatedCount += 1;
     committed.push({
       intakeId: item.intakeId,
@@ -435,6 +441,8 @@ export async function commitLeadIntake(options: {
   return {
     created: createdCount,
     updated: updatedCount,
+    createdLeadIds,
+    updatedLeadIds,
     leadIds,
     committed,
     alreadyPresent,

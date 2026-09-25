@@ -32,6 +32,20 @@ type Payload = {
   error?: string;
 };
 
+type SupplyPayload = {
+  config: { enabled: boolean; queueTarget: number; assigneeIds: string[] };
+  callers: Array<{ userId: string; name: string; email: string; role: string; queueCount: number }>;
+  lastRun: {
+    finishedAt: string;
+    created: number;
+    imported: number;
+    skippedExisting: number;
+    remainingPool: number;
+    callers: Array<{ userId: string; name: string; before: number; added: number; after: number; target: number }>;
+  } | null;
+  error?: string;
+};
+
 function formatDate(value: string | null) {
   if (!value) return "Noch kein Lauf";
   const date = new Date(value);
@@ -49,6 +63,10 @@ export default function ResearchFeedWorkspace() {
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [supplyData, setSupplyData] = useState<SupplyPayload | null>(null);
+  const [supplyEnabled, setSupplyEnabled] = useState(false);
+  const [queueTarget, setQueueTarget] = useState(30);
+  const [assigneeIds, setAssigneeIds] = useState<Set<string>>(new Set());
 
   async function load(nextStatus = status, silent = false) {
     if (!silent) setLoading(true);
@@ -69,6 +87,23 @@ export default function ResearchFeedWorkspace() {
   }
 
   useEffect(() => { void load(status); }, [status]);
+
+  async function loadSupply(silent = false) {
+    if (!silent) setError("");
+    try {
+      const response = await fetch("/api/lead-supply", { cache: "no-store" });
+      const payload = await response.json() as SupplyPayload;
+      if (!response.ok) throw new Error(payload.error || "Auto-Nachschub konnte nicht geladen werden.");
+      setSupplyData(payload);
+      setSupplyEnabled(payload.config.enabled);
+      setQueueTarget(payload.config.queueTarget);
+      setAssigneeIds(new Set(payload.config.assigneeIds));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Auto-Nachschub konnte nicht geladen werden.");
+    }
+  }
+
+  useEffect(() => { void loadSupply(); }, []);
 
   const candidates = data?.candidates || [];
   const top30 = useMemo(() => candidates.slice(0, 30), [candidates]);
@@ -160,6 +195,75 @@ export default function ResearchFeedWorkspace() {
     }
   }
 
+  function toggleAssignee(userId: string) {
+    setAssigneeIds((current) => {
+      const next = new Set(current);
+      if (next.has(userId)) next.delete(userId);
+      else next.add(userId);
+      return next;
+    });
+  }
+
+  async function persistSupply() {
+    const response = await fetch("/api/lead-supply", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        enabled: supplyEnabled,
+        queueTarget,
+        assigneeIds: [...assigneeIds],
+      }),
+    });
+    const result = await response.json() as { error?: string };
+    if (!response.ok) throw new Error(result.error || "Auto-Nachschub konnte nicht gespeichert werden.");
+  }
+
+  async function saveSupply() {
+    if (busy) return;
+    setBusy("supply-save");
+    setError("");
+    setMessage("");
+    try {
+      await persistSupply();
+      await loadSupply(true);
+      setMessage("Auto-Nachschub gespeichert.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Auto-Nachschub konnte nicht gespeichert werden.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function fillQueuesNow() {
+    if (busy || !assigneeIds.size) return;
+    setBusy("supply-run");
+    setError("");
+    setMessage("");
+    try {
+      await persistSupply();
+      const response = await fetch("/api/lead-supply", { method: "POST" });
+      const result = await response.json() as {
+        summary?: {
+          created: number;
+          imported: number;
+          remainingPool: number;
+          callers: Array<{ name: string; before: number; added: number; after: number; target: number }>;
+        };
+        error?: string;
+      };
+      if (!response.ok || !result.summary) throw new Error(result.error || "Queues konnten nicht aufgefüllt werden.");
+      const callerText = result.summary.callers
+        .map((caller) => caller.name + ": +" + caller.added + " → " + caller.after + "/" + caller.target)
+        .join(" · ");
+      setMessage(String(result.summary.created) + " neue Call-Leads verteilt · " + callerText + " · " + String(result.summary.remainingPool) + " Call-ready im Vorrat.");
+      await Promise.all([loadSupply(true), load(status, true)]);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Queues konnten nicht aufgefüllt werden.");
+    } finally {
+      setBusy("");
+    }
+  }
+
   async function toIntake() {
     if (!selected.size || busy) return;
     setBusy("intake");
@@ -215,10 +319,60 @@ export default function ResearchFeedWorkspace() {
         </div>
       </section>
 
+      <section className={styles.supplyCard}>
+        <div className={styles.supplyIntro}>
+          <small>AUTO-NACHSCHUB</small>
+          <h2>Wie viele offene Calls soll jeder Mitarbeiter morgens haben?</h2>
+          <p>Nur Call-ready Kandidaten mit validierter Telefonnummer werden automatisch ins CRM übernommen. Rohdaten und unklare Kontakte bleiben im Lead Scout.</p>
+          {supplyData?.lastRun && (
+            <div className={styles.lastSupply}>
+              <strong>Letzter Lauf · {formatDate(supplyData.lastRun.finishedAt)}</strong>
+              <span>{supplyData.lastRun.created} neu verteilt · {supplyData.lastRun.remainingPool} im Vorrat</span>
+            </div>
+          )}
+        </div>
+        <div className={styles.supplyControls}>
+          <div className={styles.supplyTop}>
+            <label className={styles.target}>
+              <span>Offene Calls je Mitarbeiter</span>
+              <select value={queueTarget} onChange={(event) => setQueueTarget(Number(event.target.value))}>
+                {[10, 20, 30, 40, 50, 60].map((value) => <option key={value} value={value}>{value} Calls</option>)}
+              </select>
+            </label>
+            <label className={styles.switch}>
+              <input type="checkbox" checked={supplyEnabled} onChange={(event) => setSupplyEnabled(event.target.checked)} />
+              <span />
+              <div><strong>Automatisch verteilen</strong><small>Nur ausgewählte Caller werden aufgefüllt.</small></div>
+            </label>
+          </div>
+          <div className={styles.callers}>
+            {(supplyData?.callers || []).map((caller) => (
+              <button
+                type="button"
+                key={caller.userId}
+                data-active={assigneeIds.has(caller.userId) ? "yes" : "no"}
+                onClick={() => toggleAssignee(caller.userId)}
+              >
+                <span>{assigneeIds.has(caller.userId) ? "✓" : "+"}</span>
+                <div><strong>{caller.name}</strong><small>{caller.role} · aktuell {caller.queueCount} offene Calls</small></div>
+                <b>{caller.queueCount}/{queueTarget}</b>
+              </button>
+            ))}
+            {!supplyData?.callers?.length && <p>Noch kein aktiver Vertrieb-/Setter-Zugang für automatische Call-Queues vorhanden.</p>}
+          </div>
+          <div className={styles.supplyActions}>
+            <span>{assigneeIds.size} Mitarbeiter ausgewählt</span>
+            <button type="button" onClick={() => void saveSupply()} disabled={Boolean(busy)}>{busy === "supply-save" ? "Speichert …" : "Speichern"}</button>
+            <button type="button" className={styles.primary} onClick={() => void fillQueuesNow()} disabled={Boolean(busy) || !assigneeIds.size}>{busy === "supply-run" ? "Verteilt …" : "Queues jetzt auffüllen"}</button>
+          </div>
+        </div>
+      </section>
+
       <section className={styles.infoBar}>
         <div><strong>Quelle</strong><span>{data?.capabilities.googlePlaces ? "Google Places + Web-Fallback" : "Web-Suche · Google Places optional"}</span></div>
         <div><strong>Letzter Fund</strong><span>{formatDate(data?.latestRunAt || null)}</span></div>
         <div><strong>Call-ready</strong><span>Nur Leads mit validierter, plausibler Telefonnummer</span></div>
+        <div><strong>Auto-Verteilung</strong><span>{supplyEnabled ? assigneeIds.size + " Caller · Ziel " + queueTarget + " je Queue" : "Manuell / pausiert"}</span></div>
       </section>
 
       <section className={styles.feedCard}>
