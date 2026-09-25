@@ -5,6 +5,7 @@ import styles from "./DailyQueueWorkspace.module.css";
 
 type QueueLead = {
   id: string;
+  slug: string;
   company: string;
   contact: string;
   ceo: string;
@@ -22,6 +23,7 @@ type QueueLead = {
   callStatus: string;
   emailStatus: string;
   whatsappStatus: string;
+  videoStatus: string;
   nextAction: string;
   nextActionAt: string | null;
   salesPriority: number;
@@ -46,6 +48,8 @@ type QueuePayload = {
 };
 
 type ScheduleMode = "callback" | "meeting" | null;
+type InfoDraft = { subject: string; body: string; previewImageUrl: string; friendlyVideoUrl: string };
+type InfoFallback = { lead: QueueLead; error: string; draft?: InfoDraft };
 
 function toLocalInput(date: Date) {
   const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
@@ -86,6 +90,8 @@ export default function DailyQueueWorkspace() {
   const [scheduleValue, setScheduleValue] = useState(defaultFuture(2));
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [infoProgress, setInfoProgress] = useState("");
+  const [infoFallback, setInfoFallback] = useState<InfoFallback | null>(null);
 
   const load = useCallback(async (selectedOwner = ownerId, silent = false) => {
     if (!silent) setLoading(true);
@@ -130,6 +136,92 @@ export default function DailyQueueWorkspace() {
     window.location.href = phoneHref(current.phone);
   }
 
+  async function prepareInfoDraft(lead: QueueLead) {
+    const response = await fetch("/api/outreach", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ leadId: lead.id, action: "prepare", step: 1, context: "info_requested" }),
+    });
+    const payload = await response.json() as Partial<InfoDraft> & { error?: string };
+    if (!response.ok) throw new Error(payload.error || "Info-Mail konnte nicht vorbereitet werden.");
+    return {
+      subject: payload.subject || `Wie besprochen: kurzes Video für ${lead.company}`,
+      body: payload.body || "",
+      previewImageUrl: payload.previewImageUrl || `/api/preview/${lead.slug}`,
+      friendlyVideoUrl: payload.friendlyVideoUrl || `/video/${lead.slug}`,
+    };
+  }
+
+  async function runInfoPackage(lead: QueueLead) {
+    let draft: InfoDraft | undefined;
+    setInfoFallback(null);
+    try {
+      if (lead.videoStatus !== "ready") {
+        if (lead.videoStatus === "processing") {
+          throw new Error("Das persönliche Video wird bereits erstellt. Bitte den Status kurz prüfen und danach erneut senden.");
+        }
+        setInfoProgress("1/3 · Profil wird geprüft und persönliches Video erstellt …");
+        const videoResponse = await fetch("/api/generate", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ leadId: lead.id }),
+        });
+        const videoPayload = await videoResponse.json() as { error?: string };
+        if (!videoResponse.ok) throw new Error(videoPayload.error || "Persönliches Video konnte nicht erstellt werden.");
+      }
+
+      setInfoProgress("2/3 · Persönliche Videoseite und Info-Mail werden vorbereitet …");
+      draft = await prepareInfoDraft(lead);
+
+      setInfoProgress("3/3 · Info-Mail wird gesendet und Follow-ups werden geplant …");
+      const sendResponse = await fetch("/api/outreach", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          leadId: lead.id,
+          action: "send",
+          step: 1,
+          context: "info_requested",
+          subject: draft.subject,
+          body: draft.body,
+        }),
+      });
+      const sent = await sendResponse.json() as { error?: string; alreadySent?: boolean };
+      if (!sendResponse.ok) throw new Error(sent.error || "Info-Mail konnte nicht gesendet werden.");
+
+      setInfoProgress("");
+      setMessage(sent.alreadySent
+        ? `${lead.company}: Info-Paket war bereits versendet – nichts doppelt gesendet.`
+        : `${lead.company}: Video, persönliche Seite, Info-Mail und Follow-ups sind fertig.`);
+      return true;
+    } catch (caught) {
+      const detail = caught instanceof Error ? caught.message : "Info-Paket konnte nicht vollständig erstellt werden.";
+      if (!draft) {
+        try { draft = await prepareInfoDraft(lead); } catch { /* manual fallback remains available */ }
+      }
+      setInfoProgress("");
+      setInfoFallback({ lead, error: detail, draft });
+      setError(`${lead.company}: ${detail}`);
+      return false;
+    }
+  }
+
+  async function retryInfoPackage() {
+    if (!infoFallback || busy) return;
+    const lead = infoFallback.lead;
+    setBusy("info-retry");
+    setError("");
+    const success = await runInfoPackage(lead);
+    if (success) await load(ownerId, true);
+    setBusy("");
+  }
+
+  async function copyInfoDraft() {
+    if (!infoFallback?.draft) return;
+    await navigator.clipboard.writeText(`Betreff: ${infoFallback.draft.subject}\n\n${infoFallback.draft.body}`);
+    setMessage("Info-Mail wurde kopiert.");
+  }
+
   async function submitSimple(action: "no_answer" | "info_requested" | "whatsapp_requested" | "no_interest", email?: string) {
     if (!current || busy) return;
     if (action === "info_requested" && !data?.permissions.canSendEmail) {
@@ -153,13 +245,20 @@ export default function DailyQueueWorkspace() {
       const result = await response.json() as { error?: string };
       if (!response.ok) throw new Error(result.error || "Call-Ergebnis konnte nicht gespeichert werden.");
 
-      const success =
-        action === "no_answer" ? "Nicht erreicht gespeichert. Der Lead ist für heute erledigt."
-        : action === "info_requested" ? "Info gewünscht gespeichert. Nächster Schritt: Info-Mail."
-        : action === "whatsapp_requested" ? "WhatsApp gewünscht gespeichert."
-        : "Kein Interesse gespeichert. Weiterer Kontakt ist gesperrt.";
-      setMessage(success);
-      await load(ownerId, true);
+      if (action === "info_requested") {
+        const infoLead = email ? { ...current, email } : current;
+        setMessage("Info gewünscht gespeichert. Das persönliche Paket wird jetzt automatisch erstellt.");
+        const success = await runInfoPackage(infoLead);
+        await load(ownerId, true);
+        if (!success) return;
+      } else {
+        const success =
+          action === "no_answer" ? "Nicht erreicht gespeichert. Der Lead ist für heute erledigt."
+          : action === "whatsapp_requested" ? "WhatsApp gewünscht gespeichert."
+          : "Kein Interesse gespeichert. Weiterer Kontakt ist gesperrt.";
+        setMessage(success);
+        await load(ownerId, true);
+      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Call-Ergebnis konnte nicht gespeichert werden.");
     } finally {
@@ -332,7 +431,7 @@ export default function DailyQueueWorkspace() {
                       setEmailCapture(true);
                     }
                   }}
-                ><span>✉</span><strong>Info gewünscht</strong><small>{current.email ? "Mail als nächstes" : "E-Mail direkt eintragen"}</small></button>
+                ><span>✉</span><strong>Info gewünscht</strong><small>{current.email ? "Video + Mail automatisch" : "E-Mail eintragen → automatisch"}</small></button>
                 <button disabled={!callStarted || Boolean(busy) || !data?.permissions.canUseWhatsapp} onClick={() => void submitSimple("whatsapp_requested")}><span>◉</span><strong>WhatsApp</strong><small>Kontakt wünscht WA</small></button>
                 <button disabled={!callStarted || Boolean(busy)} onClick={() => { setScheduleMode("callback"); setScheduleValue(defaultFuture(2)); }}><span>↺</span><strong>Rückruf</strong><small>Zeit festlegen</small></button>
                 <button disabled={!callStarted || Boolean(busy) || !data?.permissions.canBookMeetings} onClick={() => { setScheduleMode("meeting"); setScheduleValue(defaultFuture(24)); }}><span>◷</span><strong>Termin</strong><small>Datum eintragen</small></button>
@@ -344,7 +443,7 @@ export default function DailyQueueWorkspace() {
               <form className={styles.schedule} onSubmit={submitInfoEmail}>
                 <div>
                   <strong>Welche E-Mail-Adresse hat der Kontakt genannt?</strong>
-                  <small>Sie wird direkt am Lead gespeichert und der Folgeauftrag „Info-Mail senden“ angelegt.</small>
+                  <small>Sie wird am Lead gespeichert. Danach erstellt das System Video + persönliche Seite und sendet die Info-Mail.</small>
                 </div>
                 <input
                   type="email"
@@ -399,6 +498,22 @@ export default function DailyQueueWorkspace() {
         </div>
       )}
 
+      {infoProgress && <div className={styles.infoProgress}><i /><span>{infoProgress}</span></div>}
+      {infoFallback && (
+        <section className={styles.infoFallback}>
+          <div>
+            <small>INFO-PAKET BRAUCHT HILFE</small>
+            <strong>{infoFallback.lead.company}</strong>
+            <p>{infoFallback.error}</p>
+          </div>
+          <div className={styles.infoFallbackActions}>
+            <button type="button" onClick={() => void retryInfoPackage()} disabled={Boolean(busy)}>{busy === "info-retry" ? "Prüft erneut …" : "Erneut versuchen"}</button>
+            {infoFallback.draft && <button type="button" onClick={() => void copyInfoDraft()}>Mail kopieren</button>}
+            <a href={`/v/${infoFallback.lead.slug}`} target="_blank" rel="noreferrer">Videoseite prüfen ↗</a>
+            <a href="/dashboard/outbound">Manuell öffnen ↗</a>
+          </div>
+        </section>
+      )}
       {message && <div className={styles.message}>{message}</div>}
       {error && <div className={styles.error}>{error}</div>}
     </div>
