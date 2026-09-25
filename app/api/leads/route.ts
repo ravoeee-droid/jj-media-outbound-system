@@ -46,7 +46,26 @@ export async function GET(request: Request) {
       if (searchFilter) filters.push(searchFilter);
     }
     const rows = await getDb()
-      .select()
+      .select({
+        id: leads.id,
+        company: leads.company,
+        contact: leads.contact,
+        email: leads.email,
+        phone: leads.phone,
+        instagramUrl: leads.instagramUrl,
+        websiteUrl: leads.websiteUrl,
+        slug: leads.slug,
+        pipelineStage: leads.pipelineStage,
+        videoStatus: leads.videoStatus,
+        watchPercent: leads.watchPercent,
+        salesPriority: leads.salesPriority,
+        websiteScore: leads.websiteScore,
+        jobCount: leads.jobCount,
+        dealValue: leads.dealValue,
+        probability: leads.probability,
+        ownerId: leads.ownerId,
+        updatedAt: leads.updatedAt,
+      })
       .from(leads)
       .where(and(...filters))
       .orderBy(desc(leads.salesPriority), desc(leads.updatedAt))
