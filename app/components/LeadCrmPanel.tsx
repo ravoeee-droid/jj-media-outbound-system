@@ -161,7 +161,13 @@ export default function LeadCrmPanel({
   }, [loadDetails]);
 
   const lead = payload?.lead;
-  const permissions = payload?.permissions;
+  const permissions: Permissions = payload?.permissions ?? {
+    canManageLeads: false,
+    canSendEmail: false,
+    canUseWhatsapp: false,
+    canGenerateVideo: false,
+    canBookMeetings: false,
+  };
 
   function patch<K extends keyof LeadDetail>(key: K, value: LeadDetail[K]) {
     setPayload((current) => current ? { ...current, lead: { ...current.lead, [key]: value } } : current);
