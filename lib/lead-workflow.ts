@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
-import { activities, bookings, leads, tasks } from "@/db/schema";
+import { activities, bookings, leads, outreach, tasks, whatsappQueue, whatsappThreads } from "@/db/schema";
 
 type Context = {
   workspaceId: string;
@@ -183,8 +183,24 @@ export async function markNoInterest(context: Context) {
     updatedAt: new Date(),
   }).where(eq(leads.id, lead.id)).returning();
 
-  await db.update(tasks).set({ status: "dismissed", updatedAt: new Date() })
-    .where(and(eq(tasks.workspaceId, context.workspaceId), eq(tasks.leadId, lead.id), eq(tasks.status, "open")));
+  const [whatsappThread] = await db
+    .select({ id: whatsappThreads.id })
+    .from(whatsappThreads)
+    .where(and(eq(whatsappThreads.workspaceId, context.workspaceId), eq(whatsappThreads.leadId, lead.id)))
+    .limit(1);
+
+  await Promise.all([
+    db.update(tasks).set({ status: "dismissed", updatedAt: new Date() })
+      .where(and(eq(tasks.workspaceId, context.workspaceId), eq(tasks.leadId, lead.id), eq(tasks.status, "open"))),
+    db.update(outreach).set({ status: "cancelled", updatedAt: new Date() })
+      .where(and(eq(outreach.workspaceId, context.workspaceId), eq(outreach.leadId, lead.id), eq(outreach.status, "scheduled"))),
+    db.update(whatsappThreads).set({ status: "closed", updatedAt: new Date() })
+      .where(and(eq(whatsappThreads.workspaceId, context.workspaceId), eq(whatsappThreads.leadId, lead.id))),
+  ]);
+  if (whatsappThread) {
+    await db.update(whatsappQueue).set({ status: "cancelled", updatedAt: new Date() })
+      .where(and(eq(whatsappQueue.workspaceId, context.workspaceId), eq(whatsappQueue.threadId, whatsappThread.id), eq(whatsappQueue.status, "queued")));
+  }
 
   await db.insert(activities).values({
     workspaceId: context.workspaceId,
