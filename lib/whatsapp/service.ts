@@ -317,11 +317,9 @@ export async function receiveMessage(workspaceId: string, input: { id: string; p
     return { stopped: true };
   }
   if (requiresHuman(input.body)) { await handoff(workspaceId, thread.id, "Der Kontakt möchte eine persönliche Bearbeitung oder verhandeln."); return { handoff: true }; }
-  try { await createReply(workspaceId, thread.id, true); }
-  catch (error) {
-    if (!(error instanceof Error && error.message.includes("gerade verarbeitet"))) await handoff(workspaceId, thread.id, error instanceof Error ? error.message : "KI-Antwort bitte prüfen");
-  }
-  return { received: true, duplicate: !message };
+  // Keep the inbound webhook fast: persist first, then let the laptop's tick loop
+  // create the AI reply. This avoids holding a Vercel request open while Ollama runs.
+  return { received: true, duplicate: !message, automationQueued: Boolean(message) };
 }
 
 export async function receiveReceipt(workspaceId: string, providerId: string, status: "sent" | "delivered" | "read") {
