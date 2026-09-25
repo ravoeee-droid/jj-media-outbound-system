@@ -113,6 +113,7 @@ let qrData = "";
 let stopping = false;
 let pumpBusy = false;
 let aiPumpBusy = false;
+let tickBusy = false;
 let aiReady = false;
 let aiLastError = "";
 let historySync = null;
@@ -244,6 +245,28 @@ async function pump() {
   } finally { pumpBusy = false; }
 }
 
+function wakeAiPump() {
+  for (const delay of [400, 1_200, 2_800]) {
+    setTimeout(() => { if (!stopping) void aiPump(); }, delay);
+  }
+}
+
+async function tickPump() {
+  if (!connected || tickBusy || stopping) return false;
+  tickBusy = true;
+  try {
+    const pending = api({ action: "tick", workerId: config.workerId }, 70_000);
+    // A tick can enqueue a local Ollama job almost immediately. Wake the adaptive
+    // AI poller so it does not sit at its 30s idle backoff while Vercel is waiting.
+    wakeAiPump();
+    await pending;
+    return true;
+  } catch (error) {
+    console.warn(`Automatik: ${error.message}`);
+    return false;
+  } finally { tickBusy = false; }
+}
+
 async function handleMessage(entry) {
   const key = entry?.key || {};
   const jid = key.remoteJid || "";
@@ -255,8 +278,9 @@ async function handleMessage(entry) {
   if (key.fromMe && [...inFlight.values()].some((row) => row.to === phoneNumber && row.body === content.body)) return;
   if (key.fromMe && Object.values(ledger).some((row) => row?.providerId === key.id)) return;
   try {
-    const result = await api({ action: "event", workerId: config.workerId, id: key.id, phone: phoneNumber, body: content.body, kind: content.kind, timestamp: new Date(Number(entry.messageTimestamp || Date.now() / 1000) * 1000).toISOString(), fromMe: key.fromMe === true }, 115_000);
+    const result = await api({ action: "event", workerId: config.workerId, id: key.id, phone: phoneNumber, body: content.body, kind: content.kind, timestamp: new Date(Number(entry.messageTimestamp || Date.now() / 1000) * 1000).toISOString(), fromMe: key.fromMe === true }, 30_000);
     if (result?.ignored) await historySync?.ingest(entry);
+    else if (!key.fromMe) void tickPump();
   } catch (error) { console.warn(`Chat-Sync: ${error.message}`); }
 }
 
@@ -296,7 +320,7 @@ async function connect() {
       console.log("✓ Lead-Radar aktiv: verfügbare 1:1-Chat-Historie wird synchronisiert und lokal analysiert.");
       await statusHeartbeat();
       void historySync?.sweep();
-      void api({ action: "tick", workerId: config.workerId }).catch(() => undefined);
+      void tickPump();
     }
     if (connection === "close") {
       connected = false;
@@ -339,7 +363,7 @@ const stopPumpLoop = createAdaptiveLoop(pump, { minMs: OUTBOUND_POLL_MIN_MS, max
 const stopAiLoop = createAdaptiveLoop(aiPump, { minMs: AI_POLL_MIN_MS, maxMs: AI_POLL_MAX_MS });
 const statusTimer = setInterval(() => void statusHeartbeat(), STATUS_INTERVAL_MS);
 const ollamaTimer = setInterval(() => void checkOllama().then(() => statusHeartbeat()), OLLAMA_INTERVAL_MS);
-const tickTimer = setInterval(() => { if (connected && !stopping) void api({ action: "tick", workerId: config.workerId }, 110_000).catch((error) => console.warn(`Automatik: ${error.message}`)); }, TICK_INTERVAL_MS);
+const tickTimer = setInterval(() => { if (connected && !stopping) void tickPump(); }, TICK_INTERVAL_MS);
 
 async function shutdown() {
   if (stopping) return;
