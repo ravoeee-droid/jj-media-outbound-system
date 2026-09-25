@@ -78,6 +78,13 @@ export function requiresHuman(text: string) {
     || /(?:menschen|menschlich|persönlich sprechen|jessica sprechen|rufen sie mich|ruf mich)/i.test(text);
 }
 
+export function isBuyingReady(text: string, intent: string, confidence: number) {
+  if (!["interested", "price"].includes(intent) || confidence < 0.84) return false;
+  const clean = text.toLowerCase().replace(/\s+/g, " ").trim();
+  if (/\b(?:nicht|noch nicht|vielleicht|eventuell|später|erst ?mal)\b.{0,45}\b(?:starten|loslegen|beauftragen|zusammenarbeiten|angebot)\b/i.test(clean)) return false;
+  return /(?:\b(?:wir|ich)\s+(?:möchten?|wollen?|will|würden?|werden)\b.{0,45}\b(?:starten|loslegen|beauftragen|zusammenarbeiten)\b|\b(?:machen wir|legen wir los|können wir starten|koennen wir starten|wie geht es weiter)\b|\b(?:schicken|senden|schick|send)\w*\s+(?:sie\s+)?(?:mir\s+|uns\s+)?(?:bitte\s+)?(?:das|ein)\s+angebot\b|\b(?:wir|ich)\s+(?:nehmen|nehme)\s+(?:das|es)\b)/i.test(clean);
+}
+
 export function isSuppressed(tags: string[]) {
   return tags.some((t) => ["opt-out", "do-not-contact", "gesperrt"].includes(t.toLowerCase()));
 }
@@ -122,6 +129,10 @@ export function effectiveMode(global: AgentConfig, threadMode: AgentMode): Agent
   if (!global.enabled || global.defaultMode === "manual" || threadMode === "manual") return "manual";
   if (global.defaultMode !== "autopilot" || threadMode !== "autopilot") return "copilot";
   return "autopilot";
+}
+
+export function modeAfterHumanSend(threadMode: AgentMode): AgentMode {
+  return threadMode === "autopilot" ? "manual" : threadMode;
 }
 
 export function selectKnowledge(entries: KnowledgeEntry[], query: string): KnowledgeEntry[] {

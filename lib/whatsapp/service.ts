@@ -4,7 +4,7 @@ import { activities, assets, leads, settings, tasks, whatsappMessages, whatsappQ
 import { draftReply, type AgentDecision, type ChatLine } from "./ai";
 import { availableSlots, bookSlot, localClock } from "./calendar";
 import { getAgentConfig, withLease } from "./config";
-import { chosenSlot, effectiveMode, isOptOut, isSuppressed, normalizePhone, requiresHuman, type AgentMode, type CalendarSlot } from "./policy";
+import { chosenSlot, effectiveMode, isBuyingReady, isOptOut, isSuppressed, modeAfterHumanSend, normalizePhone, requiresHuman, type AgentMode, type CalendarSlot } from "./policy";
 import { requireSecureAccess } from "./access";
 
 export async function threadRecord(workspaceId: string, threadId: string) {
@@ -174,6 +174,11 @@ export async function sendManual(args: { workspaceId: string; threadId: string; 
     }
     const [message] = await db.insert(whatsappMessages).values({ workspaceId: args.workspaceId, threadId: args.threadId, direction: "outbound", body: args.body, kind: args.attachmentId ? "attachment" : "text", idempotencyKey: `manual:${args.key}`, metadata: { actor: "human", ...(slots ? { slots } : {}), ...(args.attachmentId ? { attachmentId: args.attachmentId } : {}) } }).returning();
     const result = await deliver({ ...args, messageId: message.id, actor: "human" });
+    const nextMode = modeAfterHumanSend(thread.mode);
+    if (nextMode !== thread.mode) {
+      await db.update(whatsappThreads).set({ mode: nextMode, version: sql`${whatsappThreads.version} + 1`, updatedAt: new Date() }).where(and(eq(whatsappThreads.workspaceId, args.workspaceId), eq(whatsappThreads.id, args.threadId)));
+      await activity(args.workspaceId, lead.id, "Autopilot durch Team-Antwort pausiert", "Der Kontakt bleibt im manuellen Modus, bis Autopilot ausdrücklich wieder aktiviert wird.", { messageId: message.id });
+    }
     if (slots) await db.update(whatsappThreads).set({ offeredSlots: slots, updatedAt: new Date() }).where(and(eq(whatsappThreads.workspaceId, args.workspaceId), eq(whatsappThreads.id, args.threadId)));
     if (args.draftId) await db.update(whatsappMessages).set({ status: "used", updatedAt: new Date() }).where(and(eq(whatsappMessages.workspaceId, args.workspaceId), eq(whatsappMessages.id, args.draftId), eq(whatsappMessages.threadId, args.threadId), eq(whatsappMessages.status, "draft")));
     return result;
@@ -263,13 +268,19 @@ export async function createReply(workspaceId: string, threadId: string, automat
         } else { decision.handoff = true; decision.reason = "Automatische Terminierung ist noch nicht aktiviert."; }
       }
     }
+    const buyingReady = Boolean(lastInbound?.body && isBuyingReady(lastInbound.body, decision.intent, decision.confidence));
+    if (buyingReady) {
+      decision.handoff = true;
+      decision.reason = "Konkrete Kauf- oder Startbereitschaft erkannt – bitte persönlich übernehmen.";
+    }
+
     const fresh = await threadRecord(workspaceId, threadId);
     const currentConfig = await getAgentConfig(workspaceId);
     if (fresh.thread.version !== thread.version || fresh.thread.lastInboundId !== thread.lastInboundId || currentConfig.version !== config.version) throw new Error("Während des Entwurfs gab es Änderungen. Bitte den aktuellen Verlauf erneut prüfen.");
     const [message] = await db.insert(whatsappMessages).values({ workspaceId, threadId, direction: "outbound", status: "draft", body: decision.reply, idempotencyKey: key, sourceId: thread.lastInboundId, metadata: { ...decision, actor: outreach ? "outreach" : "agent", configVersion: config.version, threadVersion: thread.version } }).onConflictDoNothing().returning();
     if (!message) return null;
     await db.update(whatsappThreads).set({ summary: decision.summary, intent: decision.intent, updatedAt: new Date() }).where(and(eq(whatsappThreads.workspaceId, workspaceId), eq(whatsappThreads.id, threadId)));
-    if (decision.intent === "interested") await db.update(leads).set({ salesPriority: Math.max(lead.salesPriority, 85), lastActivityAt: new Date(), updatedAt: new Date() }).where(and(eq(leads.workspaceId, workspaceId), eq(leads.id, lead.id)));
+    if (decision.intent === "interested" || buyingReady) await db.update(leads).set({ salesPriority: Math.max(lead.salesPriority, buyingReady ? 100 : 85), lastActivityAt: new Date(), updatedAt: new Date() }).where(and(eq(leads.workspaceId, workspaceId), eq(leads.id, lead.id)));
     if (decision.intent === "follow_up" && decision.followUpAt) await followUp(workspaceId, threadId, decision.followUpAt, thread.lastInboundId || message.id);
     if (decision.intent === "no_interest") { await updateThread(workspaceId, threadId, { status: "closed" }); return message; }
     if (automatic && decision.handoff) { await handoff(workspaceId, threadId, decision.reason || "Persönliche Antwort erforderlich"); return message; }

@@ -10,6 +10,8 @@ Unter `/admin/dashboard/whatsapp` liegen Inbox, Tageslauf, KI-Wissen und Verbind
 4. Der Tageslauf verschickt höchstens das eingestellte Tageslimit und mindestens drei Minuten auseinander. Antworten stoppen den offenen Erstkontakt.
 5. Nach einer Antwort folgt die Verkaufslogik Situation → Problem → Auswirkung → Priorität/Ziel → bisherige Versuche → Erlaubnis für Lösung. Pro Nachricht höchstens eine Frage.
 6. Opt-out, geschlossene Chats, Sperr-Tags oder menschliche Übernahme stoppen die Automatik.
+7. Antwortet das Team im Dashboard selbst in einem Kontakt mit aktivem Autopilot, wird dieser Kontakt automatisch auf **manuell** gestellt. Autopilot läuft dort erst wieder nach ausdrücklicher Reaktivierung.
+8. Erkennt die KI mit hoher Sicherheit konkrete Kauf- oder Startbereitschaft, sendet sie nicht autonom weiter: Der Lead wird auf höchste Priorität gesetzt und als Übergabe an Jessica markiert.
 
 ## Kostenloser Windows-Betrieb
 
@@ -39,7 +41,7 @@ Lokale Sitzungsdaten und das Versandjournal liegen unter `services/whatsapp-brid
 
 Vercel validiert Kontaktstatus, Zustimmung, KI-Regeln und Stop-Schalter, bevor eine Nachricht auf `sending` gesetzt wird. Der Laptop zieht nur solche validierten Aufträge. Vor dem tatsächlichen Senden prüft der Server den Kontaktstatus erneut. Der lokale Worker führt zusätzlich ein dauerhaftes Versandjournal. Ein Vorgang, dessen Zustand nach einem Absturz unklar ist, wird **nicht** automatisch wiederholt.
 
-Manuell vom verknüpften WhatsApp-Handy gesendete Nachrichten werden für bereits im CRM zugeordnete 1:1-Kontakte in die gemeinsame Timeline gespiegelt. Gruppen, Broadcasts, Newsletter und fremde private Chats werden ignoriert. Beim ersten Verbinden wird bewusst keine alte Chat-Historie automatisch importiert, damit historische Nachrichten keine neue KI-Antwort auslösen.
+Manuell vom verknüpften WhatsApp-Handy gesendete Nachrichten werden für bereits im CRM zugeordnete 1:1-Kontakte in die gemeinsame Timeline gespiegelt. Auch eine manuelle Antwort direkt aus der Outbound-Tool-Inbox pausiert einen kontaktbezogenen Autopilot sofort. Gruppen, Broadcasts, Newsletter und fremde private Chats werden ignoriert. Beim ersten Verbinden wird bewusst keine alte Chat-Historie automatisch importiert, damit historische Nachrichten keine neue KI-Antwort auslösen.
 
 Baileys ist eine inoffizielle WhatsApp-Web-Anbindung. Deshalb gibt es keine technische Garantie gegen Kontoeinschränkungen. Das System enthält keine Tricks zur Umgehung von Spam-Erkennung; die Schutzschicht besteht aus Zustimmung, manueller Freigabe, Limits, Abstand, Opt-out und Kill-Switch. Für größere Volumen sollte die offizielle WhatsApp Business Platform verwendet werden.
 

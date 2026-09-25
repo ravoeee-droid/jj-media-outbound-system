@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { agentConfigSchema, chosenSlot, DEFAULT_AGENT, effectiveMode, guardDecision, isOptOut, normalizePhone, requiresHuman, selectKnowledge } from "../lib/whatsapp/policy.ts";
+import { agentConfigSchema, chosenSlot, DEFAULT_AGENT, effectiveMode, guardDecision, isBuyingReady, isOptOut, modeAfterHumanSend, normalizePhone, requiresHuman, selectKnowledge } from "../lib/whatsapp/policy.ts";
 import { verifyWebhook } from "../lib/whatsapp/provider.ts";
 import { requireSecureAccess, secureAccessConfigured } from "../lib/whatsapp/access.ts";
 
@@ -34,6 +34,21 @@ test("global pause, global copilot, and human takeover override per-contact auto
   assert.equal(effectiveMode(active, "manual"), "manual");
   assert.equal(effectiveMode({ ...active, defaultMode: "copilot" }, "autopilot"), "copilot");
   assert.equal(effectiveMode({ ...active, defaultMode: "manual" }, "autopilot"), "manual");
+});
+
+test("manual team replies pause contact-level autopilot without degrading copilot", () => {
+  assert.equal(modeAfterHumanSend("autopilot"), "manual");
+  assert.equal(modeAfterHumanSend("copilot"), "copilot");
+  assert.equal(modeAfterHumanSend("manual"), "manual");
+});
+
+test("clear buying readiness is handed to Jessica while weak interest stays with the agent", () => {
+  assert.equal(isBuyingReady("Wir möchten starten. Wie geht es weiter?", "interested", 0.95), true);
+  assert.equal(isBuyingReady("Schicken Sie uns bitte ein Angebot.", "price", 0.92), true);
+  assert.equal(isBuyingReady("Klingt interessant, erzählen Sie gerne mehr.", "interested", 0.95), false);
+  assert.equal(isBuyingReady("Vielleicht können wir später starten.", "interested", 0.95), false);
+  assert.equal(isBuyingReady("Wir möchten starten.", "interested", 0.6), false);
+  assert.equal(isBuyingReady("Wir möchten starten.", "other", 0.98), false);
 });
 
 test("unapproved company data and placeholder prices are never retrieved", () => {
