@@ -608,7 +608,11 @@ export async function restoreResearchCandidates(workspaceId: string, ids: string
   if (!unique.length) return 0;
   const db = getDb();
   const rows = await db.select({ id: researchCandidates.id, raw: researchCandidates.raw }).from(researchCandidates)
-    .where(and(eq(researchCandidates.workspaceId, workspaceId), inArray(researchCandidates.id, unique), eq(researchCandidates.status, "dismissed")));
+    .where(and(
+      eq(researchCandidates.workspaceId, workspaceId),
+      inArray(researchCandidates.id, unique),
+      inArray(researchCandidates.status, ["dismissed", "shortlisted"]),
+    ));
   const ready = rows.filter((row) => {
     const value = row.raw?.contactValidation;
     return Boolean(value && typeof value === "object" && !Array.isArray(value) && (value as { phone?: { valid?: boolean } }).phone?.valid);
@@ -618,12 +622,12 @@ export async function restoreResearchCandidates(workspaceId: string, ids: string
   let updated = 0;
   if (ready.length) {
     const changed = await db.update(researchCandidates).set({ status: "call_ready", reviewedAt: new Date(), updatedAt: new Date() })
-      .where(and(eq(researchCandidates.workspaceId, workspaceId), inArray(researchCandidates.id, ready), eq(researchCandidates.status, "dismissed"))).returning({ id: researchCandidates.id });
+      .where(and(eq(researchCandidates.workspaceId, workspaceId), inArray(researchCandidates.id, ready), inArray(researchCandidates.status, ["dismissed", "shortlisted"]))).returning({ id: researchCandidates.id });
     updated += changed.length;
   }
   if (review.length) {
     const changed = await db.update(researchCandidates).set({ status: "new", reviewedAt: new Date(), updatedAt: new Date() })
-      .where(and(eq(researchCandidates.workspaceId, workspaceId), inArray(researchCandidates.id, review), eq(researchCandidates.status, "dismissed"))).returning({ id: researchCandidates.id });
+      .where(and(eq(researchCandidates.workspaceId, workspaceId), inArray(researchCandidates.id, review), inArray(researchCandidates.status, ["dismissed", "shortlisted"]))).returning({ id: researchCandidates.id });
     updated += changed.length;
   }
   return updated;

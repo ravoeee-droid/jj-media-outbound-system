@@ -264,7 +264,7 @@ export default function ResearchFeedWorkspace() {
             </tbody>
           </table>
           {loading && <div className={styles.empty}>Feed wird geladen …</div>}
-          {!loading && !candidates.length && <div className={styles.empty}>{status === "call_ready" ? "Noch keine Call-ready Leads. Suchprofil speichern und den Lead Scout starten." : status === "new" ? "Keine unvollständigen Kandidaten zur Prüfung." : "Dieser Bereich ist leer."}</div>
+          {!loading && !candidates.length && <div className={styles.empty}>{status === "call_ready" ? "Noch keine Call-ready Leads. Suchprofil speichern und den Lead Scout starten." : status === "new" ? "Keine unvollständigen Kandidaten zur Prüfung." : "Dieser Bereich ist leer."}</div>}
         </div>
       </section>
 
