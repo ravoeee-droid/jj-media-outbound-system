@@ -12,6 +12,7 @@ Unter `/admin/dashboard/whatsapp` liegen Inbox, Tageslauf, KI-Wissen und Verbind
 6. Opt-out, geschlossene Chats, Sperr-Tags oder menschliche Übernahme stoppen die Automatik.
 7. Antwortet das Team im Dashboard selbst in einem Kontakt mit aktivem Autopilot, wird dieser Kontakt automatisch auf **manuell** gestellt. Autopilot läuft dort erst wieder nach ausdrücklicher Reaktivierung.
 8. Erkennt die KI mit hoher Sicherheit konkrete Kauf- oder Startbereitschaft, sendet sie nicht autonom weiter: Der Lead wird auf höchste Priorität gesetzt und als Übergabe an Jessica markiert.
+9. Bei Termininteresse werden ausschließlich echte freie Kalenderzeiten angeboten. Ein ausgewählter Slot wird vor der Buchung erneut geprüft; erst nach bestätigtem Google-Event **und** Google-Meet-Link gilt der Termin als gebucht. Danach springt der CRM-Lead auf `call_booked`, offene WhatsApp-Wiedervorlagen werden beendet und der Termin erscheint in der Aktivitätshistorie.
 
 ## Kostenloser Windows-Betrieb
 

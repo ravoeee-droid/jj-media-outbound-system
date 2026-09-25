@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { agentConfigSchema, chosenSlot, DEFAULT_AGENT, effectiveMode, guardDecision, isBuyingReady, isOptOut, modeAfterHumanSend, normalizePhone, requiresHuman, selectKnowledge } from "../lib/whatsapp/policy.ts";
+import { agentConfigSchema, bookingSlotIsCurrent, chosenSlot, DEFAULT_AGENT, effectiveMode, guardDecision, isBuyingReady, isOptOut, modeAfterHumanSend, normalizePhone, requiresHuman, selectKnowledge } from "../lib/whatsapp/policy.ts";
 import { verifyWebhook } from "../lib/whatsapp/provider.ts";
 import { requireSecureAccess, secureAccessConfigured } from "../lib/whatsapp/access.ts";
 
@@ -68,6 +68,25 @@ test("German numbers normalize consistently and groups/invalid values are reject
   assert.equal(normalizePhone("0170 1234567"), "491701234567");
   assert.equal(normalizePhone("00491701234567"), "491701234567");
   assert.equal(normalizePhone("491701234567@g.us"), null); assert.equal(normalizePhone("123"), null);
+});
+
+test("calendar slots expire with config changes, duration changes and the notice window", () => {
+  const config = { ...DEFAULT_AGENT, version: 4, calendarId: "primary", durationMinutes: 15, noticeHours: 3 };
+  const valid = {
+    id: "slot",
+    start: "2026-09-02T12:00:00Z",
+    end: "2026-09-02T12:15:00Z",
+    label: "Mi., 02.09.2026, 14:00",
+    expiresAt: "2026-09-02T08:15:00Z",
+    configVersion: 4,
+    calendarId: "primary",
+  };
+  assert.equal(bookingSlotIsCurrent(valid, config, now), true);
+  assert.equal(bookingSlotIsCurrent({ ...valid, configVersion: 3 }, config, now), false);
+  assert.equal(bookingSlotIsCurrent({ ...valid, calendarId: "sales" }, config, now), false);
+  assert.equal(bookingSlotIsCurrent({ ...valid, end: "2026-09-02T12:30:00Z" }, config, now), false);
+  assert.equal(bookingSlotIsCurrent({ ...valid, expiresAt: "2026-09-02T07:59:59Z" }, config, now), false);
+  assert.equal(bookingSlotIsCurrent({ ...valid, start: "2026-09-02T10:00:00Z", end: "2026-09-02T10:15:00Z" }, config, now), false);
 });
 
 test("only an explicit choice of a sent, unexpired offer authorizes booking", () => {

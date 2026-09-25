@@ -125,6 +125,19 @@ export function chosenSlot(text: string, slots: CalendarSlot[], now = Date.now()
   return selected;
 }
 
+export function bookingSlotIsCurrent(slot: CalendarSlot, config: AgentConfig, now = Date.now()) {
+  const start = Date.parse(slot.start);
+  const end = Date.parse(slot.end);
+  const expiresAt = Date.parse(slot.expiresAt);
+  if (![start, end, expiresAt].every(Number.isFinite)) return false;
+  if (slot.configVersion !== config.version || slot.calendarId !== config.calendarId) return false;
+  if (expiresAt <= now || start < now + config.noticeHours * 3_600_000) return false;
+  if (end - start !== config.durationMinutes * 60_000) return false;
+  // Slots are only generated for the next 14 days; keep one day of clock/DST slack.
+  if (start > now + 15 * 86_400_000) return false;
+  return true;
+}
+
 export function effectiveMode(global: AgentConfig, threadMode: AgentMode): AgentMode {
   if (!global.enabled || global.defaultMode === "manual" || threadMode === "manual") return "manual";
   if (global.defaultMode !== "autopilot" || threadMode !== "autopilot") return "copilot";

@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 import { and, eq, gt, inArray, lt } from "drizzle-orm";
 import { getDb } from "@/db";
-import { accounts, bookings, leads, whatsappReservations, whatsappThreads, type Lead } from "@/db/schema";
+import { accounts, activities, bookings, leads, tasks, whatsappReservations, whatsappThreads, type Lead } from "@/db/schema";
 import { getGoogleAccessToken } from "@/lib/google";
 import { getAgentConfig, withLease } from "./config";
-import { effectiveMode, isSuppressed, type AgentConfig, type CalendarSlot } from "./policy";
+import { bookingSlotIsCurrent, effectiveMode, isSuppressed, type AgentConfig, type CalendarSlot } from "./policy";
 import { requireSecureAccess } from "./access";
 
 const CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.events";
@@ -24,6 +24,21 @@ async function calendarRequest(userId: string, path: string, body?: unknown, met
     ...(body ? { body: JSON.stringify(body) } : {}),
     cache: "no-store", signal: AbortSignal.timeout(15_000),
   });
+}
+
+type GoogleCalendarEvent = {
+  id?: string;
+  status?: string;
+  hangoutLink?: string;
+  start?: { dateTime?: string };
+  end?: { dateTime?: string };
+  conferenceData?: { entryPoints?: Array<{ entryPointType?: string; uri?: string }> };
+};
+
+function meetLink(event?: GoogleCalendarEvent) {
+  return event?.hangoutLink
+    || event?.conferenceData?.entryPoints?.find((entry) => entry.entryPointType === "video" && entry.uri)?.uri
+    || "";
 }
 
 type Busy = { start: string; end: string };
@@ -87,9 +102,10 @@ export async function bookSlot(args: { userId: string; workspaceId: string; thre
       if (args.automatic && (effectiveMode(currentConfig, current.thread.mode) !== "autopilot" || current.thread.status !== "open")) throw new Error("Die automatische Terminierung wurde angehalten.");
     }
     await verifyCurrentPermission();
+    if (!bookingSlotIsCurrent(slot, config)) throw new Error("Dieser Terminvorschlag ist abgelaufen oder passt nicht mehr zu den aktuellen Terminregeln. Bitte neue Zeiten abrufen.");
     const eventId = `jj${createHash("sha256").update(`${workspaceId}:${threadId}:${config.calendarId}:${slot.start}`).digest("hex").slice(0, 40)}`;
     const [existing] = await db.select().from(whatsappReservations).where(and(eq(whatsappReservations.workspaceId, workspaceId), eq(whatsappReservations.eventId, eventId))).limit(1);
-    let event: { id?: string; status?: string; hangoutLink?: string; start?: { dateTime?: string }; end?: { dateTime?: string } } | undefined;
+    let event: GoogleCalendarEvent | undefined;
     const path = `calendars/${encodeURIComponent(config.calendarId)}/events`;
     if (existing) {
       const check = await calendarRequest(userId, `${path}/${eventId}`);
@@ -97,7 +113,6 @@ export async function bookSlot(args: { userId: string; workspaceId: string; thre
       else if (check.status !== 404) throw new Error("Der bestehende Terminstatus konnte nicht sicher geprüft werden.");
     }
     if (!event) {
-      if (Date.parse(slot.expiresAt) <= Date.now() || Date.parse(slot.start) < Date.now() + config.noticeHours * 3_600_000) throw new Error("Dieser Terminvorschlag ist abgelaufen. Bitte neue Zeiten abrufen.");
       if (existing) {
         await db.update(whatsappReservations).set({ status: "retrying", updatedAt: new Date() }).where(eq(whatsappReservations.id, existing.id));
       }
@@ -125,11 +140,40 @@ export async function bookSlot(args: { userId: string; workspaceId: string; thre
       }
     }
     if (event?.status === "cancelled" || Date.parse(event?.start?.dateTime ?? "") !== Date.parse(slot.start) || Date.parse(event?.end?.dateTime ?? "") !== Date.parse(slot.end)) throw new Error("Der Kalendertermin stimmt nicht mit der ausgewählten Zeit überein. Bitte persönlich prüfen.");
-    await db.update(whatsappReservations).set({ status: "confirmed", joinUrl: event?.hangoutLink ?? "", updatedAt: new Date() }).where(and(eq(whatsappReservations.workspaceId, workspaceId), eq(whatsappReservations.eventId, eventId)));
+
+    let joinUrl = meetLink(event);
+    if (!joinUrl) {
+      // Google can confirm the event a fraction earlier than the Meet conference.
+      for (const delay of [250, 650, 1_200]) {
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        const check = await calendarRequest(userId, `${path}/${eventId}`);
+        if (!check.ok) break;
+        event = await check.json() as GoogleCalendarEvent;
+        joinUrl = meetLink(event);
+        if (joinUrl) break;
+      }
+    }
+    if (!joinUrl) {
+      await db.update(whatsappReservations).set({ status: "unknown", updatedAt: new Date() }).where(and(eq(whatsappReservations.workspaceId, workspaceId), eq(whatsappReservations.eventId, eventId)));
+      throw new Error("Der Termin wurde von Google angelegt, aber der Meet-Link ist noch nicht eindeutig bestätigt. Bitte den Kalender prüfen; es wird kein zweiter Termin erstellt.");
+    }
+
+    await db.update(whatsappReservations).set({ status: "confirmed", joinUrl, updatedAt: new Date() }).where(and(eq(whatsappReservations.workspaceId, workspaceId), eq(whatsappReservations.eventId, eventId)));
     const [record] = await db.select().from(bookings).where(and(eq(bookings.leadId, lead.id), eq(bookings.externalId, eventId))).limit(1);
-    if (!record) await db.insert(bookings).values({ leadId: lead.id, scheduledAt: new Date(slot.start), provider: "google_whatsapp", externalId: eventId, status: "confirmed" });
-    await db.update(leads).set({ pipelineStage: "call_booked", probability: Math.max(lead.probability, 60), lastActivityAt: new Date(), updatedAt: new Date() }).where(and(eq(leads.id, lead.id), eq(leads.workspaceId, workspaceId)));
-    await db.update(whatsappThreads).set({ status: "booked", intent: "booking", offeredSlots: [], operatorSlots: [], updatedAt: new Date() }).where(and(eq(whatsappThreads.id, threadId), eq(whatsappThreads.workspaceId, workspaceId), eq(whatsappThreads.version, args.expectedVersion), eq(whatsappThreads.consent, "granted")));
-    return { eventId, start: slot.start, label: slot.label, joinUrl: event?.hangoutLink ?? "" };
+    if (!record) {
+      await db.insert(bookings).values({ leadId: lead.id, scheduledAt: new Date(slot.start), provider: "google_whatsapp", externalId: eventId, status: "confirmed" });
+      await db.insert(activities).values({
+        workspaceId,
+        leadId: lead.id,
+        type: "calendar",
+        title: "Google-Meet-Termin gebucht",
+        detail: slot.label,
+        metadata: { eventId, joinUrl, startAt: slot.start, source: "whatsapp" },
+      });
+    }
+    await db.update(tasks).set({ status: "cancelled", updatedAt: new Date() }).where(and(eq(tasks.workspaceId, workspaceId), eq(tasks.leadId, lead.id), eq(tasks.type, "whatsapp_followup"), eq(tasks.status, "open")));
+    await db.update(leads).set({ pipelineStage: "call_booked", probability: Math.max(lead.probability, 60), nextFollowUpAt: null, lastActivityAt: new Date(), updatedAt: new Date() }).where(and(eq(leads.id, lead.id), eq(leads.workspaceId, workspaceId)));
+    await db.update(whatsappThreads).set({ status: "booked", intent: "booking", offeredSlots: [], operatorSlots: [], nextFollowUpAt: null, updatedAt: new Date() }).where(and(eq(whatsappThreads.id, threadId), eq(whatsappThreads.workspaceId, workspaceId), eq(whatsappThreads.version, args.expectedVersion), eq(whatsappThreads.consent, "granted")));
+    return { eventId, start: slot.start, label: slot.label, joinUrl };
   });
 }
