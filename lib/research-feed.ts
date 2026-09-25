@@ -108,12 +108,13 @@ async function fetchJson<T>(url: URL) {
 async function googlePlacesSearch(query: string): Promise<DiscoveredCandidate[]> {
   const key = process.env.GOOGLE_PLACES_API_KEY?.trim();
   if (!key) return [];
+  const apiKey = key;
 
   const url = new URL("https://maps.googleapis.com/maps/api/place/textsearch/json");
   url.searchParams.set("query", query);
   url.searchParams.set("language", "de");
   url.searchParams.set("region", "de");
-  url.searchParams.set("key", key);
+  url.searchParams.set("key", apiKey);
 
   const result = await fetchJson<{
     status?: string;
@@ -140,7 +141,7 @@ async function googlePlacesSearch(query: string): Promise<DiscoveredCandidate[]>
     detailUrl.searchParams.set("place_id", item.place_id!);
     detailUrl.searchParams.set("fields", "name,formatted_address,formatted_phone_number,website,types");
     detailUrl.searchParams.set("language", "de");
-    detailUrl.searchParams.set("key", key);
+    detailUrl.searchParams.set("key", apiKey);
     const details = await fetchJson<{
       status?: string;
       result?: {
