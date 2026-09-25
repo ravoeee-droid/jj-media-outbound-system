@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { activities, bookings, leads, outreach, tasks, whatsappQueue, whatsappThreads } from "@/db/schema";
+import { cancelPendingEmailFollowups } from "@/lib/outreach-lifecycle";
 
 type Context = {
   workspaceId: string;
@@ -174,6 +175,12 @@ export async function scheduleManualMeeting(context: Context, scheduledAt: Date)
       )),
   ]);
 
+  await cancelPendingEmailFollowups({
+    workspaceId: context.workspaceId,
+    leadId: lead.id,
+    userId: context.userId,
+    reason: "Termin wurde im CRM eingetragen.",
+  });
   return { lead: updated, booking };
 }
 
@@ -210,6 +217,13 @@ export async function markNoInterest(context: Context) {
     await db.update(whatsappQueue).set({ status: "cancelled", updatedAt: new Date() })
       .where(and(eq(whatsappQueue.workspaceId, context.workspaceId), eq(whatsappQueue.threadId, whatsappThread.id), eq(whatsappQueue.status, "queued")));
   }
+
+  await cancelPendingEmailFollowups({
+    workspaceId: context.workspaceId,
+    leadId: lead.id,
+    userId: context.userId,
+    reason: "Kein Interesse / weiterer Kontakt gesperrt.",
+  });
 
   await db.insert(activities).values({
     workspaceId: context.workspaceId,
