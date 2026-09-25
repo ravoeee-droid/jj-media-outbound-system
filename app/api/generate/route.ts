@@ -8,7 +8,8 @@ import { internalCaptureHeader } from "@/lib/internal-capture-auth";
 import { deleteMedia, downloadMedia, uploadMedia } from "@/lib/media-store";
 import { renderLeadVideo } from "@/lib/video-renderer";
 import { sendTelegramMessage } from "@/lib/telegram";
-import { apiError, requireWorkspace } from "@/lib/workspace";
+import { hasPermission } from "@/lib/team";
+import { apiError, requirePermission } from "@/lib/workspace";
 
 const inputSchema = z.object({ leadId: z.string().uuid() });
 export const runtime = "nodejs";
@@ -57,7 +58,7 @@ export async function POST(request: Request) {
   let jobId: string | undefined;
   let leadId: string | undefined;
   try {
-    const workspace = await requireWorkspace();
+    const workspace = await requirePermission("generate_video");
     const input = inputSchema.parse(await request.json());
     leadId = input.leadId;
     const db = getDb();
@@ -67,6 +68,9 @@ export async function POST(request: Request) {
       .where(and(eq(leads.id, input.leadId), eq(leads.workspaceId, workspace.workspaceId)))
       .limit(1);
     if (!lead) return Response.json({ error: "Lead wurde nicht gefunden." }, { status: 404 });
+    if (!hasPermission(workspace.role, workspace.permissions, "view_all_leads") && lead.ownerId !== workspace.user.id) {
+      throw new Error("FORBIDDEN");
+    }
     const profileUrl = lead.instagramUrl || (/instagram\.com/i.test(lead.websiteUrl) ? lead.websiteUrl : "");
     if (!profileUrl) return Response.json({ error: "Für diesen Lead fehlt das Instagram-Profil." }, { status: 400 });
 

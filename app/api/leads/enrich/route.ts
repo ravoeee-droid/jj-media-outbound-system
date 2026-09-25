@@ -3,7 +3,8 @@ import { z } from "zod";
 import { getDb } from "@/db";
 import { leads } from "@/db/schema";
 import { enrichLeadManually } from "@/lib/manual-lead-enrichment";
-import { apiError, requireWorkspace } from "@/lib/workspace";
+import { hasPermission } from "@/lib/team";
+import { apiError, requirePermission } from "@/lib/workspace";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -46,9 +47,17 @@ async function processWithConcurrency<T, R>(
 
 export async function POST(request: Request) {
   try {
-    const workspace = await requireWorkspace();
+    const workspace = await requirePermission("manage_leads");
     const input = inputSchema.parse(await request.json());
     const leadIds = [...new Set([...(input.leadId ? [input.leadId] : []), ...(input.leadIds ?? [])])];
+    if (!hasPermission(workspace.role, workspace.permissions, "view_all_leads")) {
+      const owned = await getDb()
+        .select({ id: leads.id })
+        .from(leads)
+        .where(and(eq(leads.workspaceId, workspace.workspaceId), eq(leads.ownerId, workspace.user.id)));
+      const ownedIds = new Set(owned.map((row) => row.id));
+      if (leadIds.some((leadId) => !ownedIds.has(leadId))) throw new Error("FORBIDDEN");
+    }
 
     const results = await processWithConcurrency<string, EnrichmentResult>(leadIds, 3, async (leadId) => {
       try {

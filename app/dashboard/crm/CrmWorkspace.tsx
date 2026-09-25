@@ -58,6 +58,7 @@ const actionLabel: Record<string, string> = {
   review: "Prüfen",
   enrich: "Enrichen",
   validate: "Validieren",
+  analyze: "Analysieren",
   call: "Anrufen",
   callback: "Rückruf",
   send_info: "Info senden",

@@ -4,7 +4,8 @@ import { getDb } from "@/db";
 import { activities, leads, outreach, settings, tasks } from "@/db/schema";
 import { sendStratoMessage } from "@/lib/strato-mail";
 import { defaultSettings, renderEmailHtml, renderTemplate } from "@/lib/templates";
-import { apiError, requireWorkspace } from "@/lib/workspace";
+import { hasPermission } from "@/lib/team";
+import { apiError, requirePermission } from "@/lib/workspace";
 
 const inputSchema = z.object({
   leadId: z.string().uuid(),
@@ -22,7 +23,7 @@ function addDays(days: number) {
 
 export async function POST(request: Request) {
   try {
-    const workspace = await requireWorkspace();
+    const workspace = await requirePermission("send_email");
     const input = inputSchema.parse(await request.json());
     const appBaseUrl = new URL(request.url).origin;
     const db = getDb();
@@ -36,6 +37,9 @@ export async function POST(request: Request) {
       db.select().from(settings).where(eq(settings.workspaceId, workspace.workspaceId)),
     ]);
     if (!lead) return Response.json({ error: "Lead nicht gefunden." }, { status: 404 });
+    if (!hasPermission(workspace.role, workspace.permissions, "view_all_leads") && lead.ownerId !== workspace.user.id) {
+      throw new Error("FORBIDDEN");
+    }
     if (!lead.email) return Response.json({ error: "Für diesen Lead fehlt eine E-Mail-Adresse." }, { status: 400 });
     if (lead.pipelineStage === "lost" || lead.tags.some((tag) => ["opt-out", "do-not-contact", "gesperrt"].includes(tag.toLowerCase()))) {
       return Response.json({ error: "Dieser Lead ist für weiteren Kontakt gesperrt." }, { status: 409 });
@@ -131,7 +135,14 @@ export async function POST(request: Request) {
     await Promise.all([
       db
         .update(leads)
-        .set({ pipelineStage: "contacted", lastContactAt: new Date(), lastActivityAt: new Date(), updatedAt: new Date() })
+        .set({
+          pipelineStage: "contacted",
+          emailStatus: "sent",
+          nextAction: "follow_up",
+          lastContactAt: new Date(),
+          lastActivityAt: new Date(),
+          updatedAt: new Date(),
+        })
         .where(eq(leads.id, lead.id)),
       db.insert(activities).values({
         workspaceId: workspace.workspaceId,
