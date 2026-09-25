@@ -244,7 +244,10 @@ export const activities = pgTable(
     metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
     createdAt,
   },
-  (table) => [index("activities_lead_idx").on(table.leadId, table.createdAt)],
+  (table) => [
+    index("activities_lead_idx").on(table.leadId, table.createdAt),
+    index("activities_workspace_created_idx").on(table.workspaceId, table.createdAt),
+  ],
 );
 
 export const tasks = pgTable(
