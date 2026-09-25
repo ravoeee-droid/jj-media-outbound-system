@@ -5,6 +5,7 @@ export type NormalizedLeadInput = {
   contact?: string;
   email?: string;
   phone?: string;
+  instagramUrl?: string;
   websiteUrl?: string;
   city?: string;
   region?: string;
@@ -99,13 +100,6 @@ function leadHasInstagramProfile(value: string) {
   try { return Boolean(normalizeInstagramProfile(value)); } catch { return false; }
 }
 
-function normalizeLeadUrl(value: string) {
-  const raw = text(value);
-  if (!raw) return "";
-  try { return normalizeInstagramProfile(raw); }
-  catch { return normalizeWebsite(raw); }
-}
-
 function firstCategory(row: UnknownRecord) {
   return text(row.category) || text(row.categoryName) || asArray(row.categories).map(text).find(Boolean) || "other";
 }
@@ -145,7 +139,12 @@ function rowToLead(raw: unknown): NormalizedLeadInput | null {
     text(companyLinks.website) ||
     text(enrichment.website);
   const fallbackUrl = /instagram\.com/i.test(text(row.url)) ? text(row.url) : "";
-  const websiteUrl = normalizeLeadUrl(explicitInstagram || genericWebsite || fallbackUrl);
+  const instagramUrl = (() => {
+    const raw = explicitInstagram || fallbackUrl;
+    if (!raw) return "";
+    try { return normalizeInstagramProfile(raw); } catch { return ""; }
+  })();
+  const websiteUrl = normalizeWebsite(genericWebsite);
 
   const email = firstEmail(enrichment.emails, row.emails, row.email, row["e-mail"], row.mail);
   const ceo =
@@ -175,25 +174,26 @@ function rowToLead(raw: unknown): NormalizedLeadInput | null {
   ];
   const jobCount = number(enrichment.jobCount, jobTitle ? 1 : 0);
   const websiteScore = number(enrichment.websiteScore, number(row.websiteScore));
-  const defaultPriority = websiteUrl || text(row.phone) ? 55 : 35;
+  const defaultPriority = instagramUrl || websiteUrl || text(row.phone) ? 55 : 35;
   const salesPriority = number(
     enrichment.salesPriority,
     number(row.salesPriority, Math.min(100, Math.max(defaultPriority, 100 - websiteScore + Math.min(jobCount * 5, 25)))),
   );
   const category = firstCategory(row);
-  const hasInstagram = leadHasInstagramProfile(websiteUrl);
+  const hasInstagram = leadHasInstagramProfile(instagramUrl);
 
   return {
     company,
     contact: text(row.contact) || text(row.ansprechpartner) || ceo,
     email,
     phone: text(enrichment.phone) || text(row.phone) || text(row.telefon) || text(row.phoneNumber),
+    instagramUrl,
     websiteUrl,
     city,
     region: state || country,
     category,
     score: number(row.score, Number.isFinite(rating) ? Math.round(rating * 20) : salesPriority),
-    confidence: number(row.confidence, enrichment.verificationStatus ? 70 : websiteUrl || text(row.phone) ? 65 : 45),
+    confidence: number(row.confidence, enrichment.verificationStatus ? 70 : instagramUrl || websiteUrl || text(row.phone) ? 65 : 45),
     websiteScore,
     salesPriority,
     jobCount,
@@ -214,7 +214,7 @@ function rowToLead(raw: unknown): NormalizedLeadInput | null {
     tags: [
       ...asArray(row.tags).map(text).filter(Boolean),
       ...(hasInstagram ? ["instagram-profil"] : []),
-      ...(genericWebsite && !hasInstagram ? ["website"] : []),
+      ...(genericWebsite ? ["website"] : []),
       ...(mapsUrl ? ["google-maps"] : []),
       ...categories.slice(0, 5).map((entry) => `kategorie:${entry.toLowerCase()}`),
     ],
@@ -239,7 +239,7 @@ export function normalizeImport(input: unknown): NormalizedLeadInput[] {
   for (const raw of rows) {
     const lead = rowToLead(raw);
     if (!lead) continue;
-    const key = leadUrlIdentity(lead.websiteUrl ?? "") || normalizeCompany(lead.company);
+    const key = leadUrlIdentity(lead.instagramUrl ?? "") || leadUrlIdentity(lead.websiteUrl ?? "") || normalizeCompany(lead.company);
     if (!key) continue;
     const existing = grouped.get(key);
     if (!existing) {
@@ -253,6 +253,7 @@ export function normalizeImport(input: unknown): NormalizedLeadInput[] {
       contact: existing.contact || lead.contact,
       email: existing.email || lead.email,
       phone: existing.phone || lead.phone,
+      instagramUrl: existing.instagramUrl || lead.instagramUrl,
       websiteUrl: existing.websiteUrl || lead.websiteUrl,
       city: existing.city || lead.city,
       region: existing.region || lead.region,
@@ -277,6 +278,7 @@ export function mergeLeadInputs(current: NormalizedLeadInput, incoming: Normaliz
     contact: incoming.contact || current.contact,
     email: incoming.email || current.email,
     phone: incoming.phone || current.phone,
+    instagramUrl: incoming.instagramUrl || current.instagramUrl,
     websiteUrl: incoming.websiteUrl || current.websiteUrl,
     city: incoming.city || current.city,
     region: incoming.region || current.region,

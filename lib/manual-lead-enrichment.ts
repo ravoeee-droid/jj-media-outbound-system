@@ -88,7 +88,8 @@ function uniqueCandidates(lead: LeadRow) {
   const add = (value: string, source: Candidate["source"]) => {
     const websiteUrl = normalizeWebsite(value);
     const domain = domainFromUrl(websiteUrl);
-    if (!websiteUrl || !domain || seen.has(domain)) return;
+    if (!websiteUrl || !domain || !domain.includes(".") || seen.has(domain)) return;
+    if (EXCLUDED_SEARCH_DOMAINS.some((blocked) => domain === blocked || domain.endsWith(`.${blocked}`))) return;
     seen.add(domain);
     candidates.push({ websiteUrl, source });
   };
@@ -332,6 +333,9 @@ export async function enrichLeadManually({
       city,
       region,
       summary,
+      researchStatus: "enriched",
+      validationStatus: email || phone ? "contact_found" : "needs_review",
+      nextAction: "validate",
       confidence: Math.max(lead.confidence, enrichment.confidence),
       salesPriority: Math.max(lead.salesPriority, foundSignals >= 3 ? 80 : foundSignals === 2 ? 65 : foundSignals === 1 ? 50 : 25),
       evidence: mergeEvidence(lead.evidence, [...resolutionEvidence, ...enrichment.evidence]),

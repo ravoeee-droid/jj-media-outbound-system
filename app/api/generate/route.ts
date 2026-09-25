@@ -67,7 +67,8 @@ export async function POST(request: Request) {
       .where(and(eq(leads.id, input.leadId), eq(leads.workspaceId, workspace.workspaceId)))
       .limit(1);
     if (!lead) return Response.json({ error: "Lead wurde nicht gefunden." }, { status: 404 });
-    if (!lead.websiteUrl) return Response.json({ error: "Für diesen Lead fehlt das Instagram-Profil." }, { status: 400 });
+    const profileUrl = lead.instagramUrl || (/instagram\.com/i.test(lead.websiteUrl) ? lead.websiteUrl : "");
+    if (!profileUrl) return Response.json({ error: "Für diesen Lead fehlt das Instagram-Profil." }, { status: 400 });
 
     const [assetRows, settingRows] = await Promise.all([
       db
@@ -115,7 +116,7 @@ export async function POST(request: Request) {
       const stored = await downloadMedia(manualProfilePreview.pathname || manualProfilePreview.blobUrl);
       screenshot = Buffer.from(await stored.arrayBuffer());
     } else {
-      const automaticCapture = await captureSocialProfile(request, lead.websiteUrl);
+      const automaticCapture = await captureSocialProfile(request, profileUrl);
       screenshot = automaticCapture.buffer;
       capture = { consentClicks: automaticCapture.consentClicks, hiddenOverlays: automaticCapture.hiddenOverlays, source: "instagram" };
     }

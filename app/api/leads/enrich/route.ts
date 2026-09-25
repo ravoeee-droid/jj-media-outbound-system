@@ -1,4 +1,7 @@
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
+import { getDb } from "@/db";
+import { leads } from "@/db/schema";
 import { enrichLeadManually } from "@/lib/manual-lead-enrichment";
 import { apiError, requireWorkspace } from "@/lib/workspace";
 
@@ -63,6 +66,11 @@ export async function POST(request: Request) {
         };
       } catch (error) {
         const detail = error instanceof Error ? error.message : "Enrichment fehlgeschlagen.";
+        await getDb()
+          .update(leads)
+          .set({ researchStatus: "failed", nextAction: "review", updatedAt: new Date() })
+          .where(and(eq(leads.workspaceId, workspace.workspaceId), eq(leads.id, leadId)))
+          .catch(() => undefined);
         return { leadId, ok: false, error: detail };
       }
     });

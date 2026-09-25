@@ -2,7 +2,7 @@ import { and, eq, or } from "drizzle-orm";
 import { getDb } from "@/db";
 import { activities, leads } from "@/db/schema";
 import {
-  leadUrlIdentity,
+  domainFromUrl,
   normalizeCompany,
   normalizeImport,
   normalizeWebsite,
@@ -30,8 +30,9 @@ export async function POST(request: Request) {
     for (const item of incoming) {
       const company = item.company.trim();
       const normalizedCompany = normalizeCompany(company);
+      const instagramUrl = item.instagramUrl ?? "";
       const websiteUrl = normalizeWebsite(item.websiteUrl ?? "");
-      const domain = leadUrlIdentity(websiteUrl);
+      const domain = domainFromUrl(websiteUrl);
       if (!normalizedCompany) {
         skipped += 1;
         continue;
@@ -39,6 +40,7 @@ export async function POST(request: Request) {
       const candidate = or(
         eq(leads.normalizedCompany, normalizedCompany),
         ...(domain ? [eq(leads.domain, domain)] : []),
+        ...(instagramUrl ? [eq(leads.instagramUrl, instagramUrl)] : []),
       );
       const [existing] = await db
         .select()
@@ -52,6 +54,7 @@ export async function POST(request: Request) {
         contact: item.contact ?? "",
         email: item.email ?? "",
         phone: item.phone ?? "",
+        instagramUrl,
         websiteUrl,
         domain,
         city: item.city ?? "",
@@ -80,6 +83,7 @@ export async function POST(request: Request) {
           contact: item.contact || existing.contact,
           email: item.email || existing.email,
           phone: item.phone || existing.phone,
+          instagramUrl: instagramUrl || existing.instagramUrl,
           websiteUrl: websiteUrl || existing.websiteUrl,
           domain: domain || existing.domain,
           city: item.city || existing.city,
@@ -112,8 +116,15 @@ export async function POST(request: Request) {
         .insert(leads)
         .values({
           workspaceId: workspace.workspaceId,
+          ownerId: workspace.user.id,
+          createdById: workspace.user.id,
+          assignedAt: new Date(),
           slug,
           landingPath: `/v/${slug}`,
+          researchStatus: "pending",
+          validationStatus: item.phone || item.email ? "contact_found" : "pending",
+          analysisStatus: "pending",
+          nextAction: "enrich",
           ...shared,
           company,
           normalizedCompany,

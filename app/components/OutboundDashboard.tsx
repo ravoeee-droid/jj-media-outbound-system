@@ -62,7 +62,7 @@ function mapApiLead(lead: Record<string, unknown>): Lead {
     contact: String(lead.contact || "Noch nicht ermittelt"),
     email: String(lead.email || ""),
     url: (() => {
-      const value = String(lead.websiteUrl || "");
+      const value = String(lead.instagramUrl || lead.websiteUrl || "");
       try { return `@${new URL(value).pathname.split("/").filter(Boolean)[0] || "instagram"}`; } catch { return value; }
     })(),
     status,

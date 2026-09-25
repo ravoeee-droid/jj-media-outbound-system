@@ -2,8 +2,8 @@ import { and, desc, eq, ilike, or } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db";
 import { activities, leads } from "@/db/schema";
-import { normalizeCompany, slugify } from "@/lib/leads";
-import { instagramUsername, normalizeInstagramProfile } from "@/lib/social-profile";
+import { domainFromUrl, normalizeCompany, normalizeWebsite, slugify } from "@/lib/leads";
+import { normalizeInstagramProfile } from "@/lib/social-profile";
 import { apiError, requireWorkspace } from "@/lib/workspace";
 
 export const runtime = "nodejs";
@@ -54,8 +54,13 @@ export async function POST(request: Request) {
     const workspace = await requireWorkspace();
     const input = leadInput.parse(await request.json());
     const normalizedCompany = normalizeCompany(input.company);
-    const websiteUrl = normalizeInstagramProfile(input.instagramUrl || input.websiteUrl);
-    if (!websiteUrl) return Response.json({ error: "Bitte ein Instagram-Profil angeben." }, { status: 400 });
+    const legacyProfile = !input.instagramUrl && (/instagram\.com/i.test(input.websiteUrl) || input.websiteUrl.startsWith("@"))
+      ? input.websiteUrl
+      : "";
+    const rawInstagram = input.instagramUrl || legacyProfile;
+    if (!rawInstagram) return Response.json({ error: "Bitte ein Instagram-Profil angeben." }, { status: 400 });
+    const instagramUrl = normalizeInstagramProfile(rawInstagram);
+    const websiteUrl = input.instagramUrl ? normalizeWebsite(input.websiteUrl) : "";
     const db = getDb();
     const [existing] = await db
       .select()
@@ -71,14 +76,22 @@ export async function POST(request: Request) {
       .insert(leads)
       .values({
         workspaceId: workspace.workspaceId,
+        ownerId: workspace.user.id,
+        createdById: workspace.user.id,
+        assignedAt: new Date(),
         slug,
         company: input.company,
         normalizedCompany,
         contact: input.contact,
         email: input.email,
         phone: input.phone,
+        instagramUrl,
         websiteUrl,
-        domain: instagramUsername(websiteUrl),
+        domain: domainFromUrl(websiteUrl),
+        researchStatus: "pending",
+        validationStatus: input.phone || input.email ? "contact_found" : "pending",
+        analysisStatus: "pending",
+        nextAction: "enrich",
         city: input.city,
         category: input.category,
         landingPath: `/v/${slug}`,
