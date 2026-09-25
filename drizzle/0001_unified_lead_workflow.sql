@@ -1,30 +1,30 @@
-ALTER TABLE "leads" ADD COLUMN "owner_id" uuid;
+ALTER TABLE "leads" ADD COLUMN IF NOT EXISTS "owner_id" uuid;
 --> statement-breakpoint
-ALTER TABLE "leads" ADD COLUMN "created_by_id" uuid;
+ALTER TABLE "leads" ADD COLUMN IF NOT EXISTS "created_by_id" uuid;
 --> statement-breakpoint
-ALTER TABLE "leads" ADD COLUMN "assigned_at" timestamp with time zone;
+ALTER TABLE "leads" ADD COLUMN IF NOT EXISTS "assigned_at" timestamp with time zone;
 --> statement-breakpoint
-ALTER TABLE "leads" ADD COLUMN "instagram_url" text DEFAULT '' NOT NULL;
+ALTER TABLE "leads" ADD COLUMN IF NOT EXISTS "instagram_url" text DEFAULT '' NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "leads" ADD COLUMN "research_status" text DEFAULT 'pending' NOT NULL;
+ALTER TABLE "leads" ADD COLUMN IF NOT EXISTS "research_status" text DEFAULT 'pending' NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "leads" ADD COLUMN "validation_status" text DEFAULT 'pending' NOT NULL;
+ALTER TABLE "leads" ADD COLUMN IF NOT EXISTS "validation_status" text DEFAULT 'pending' NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "leads" ADD COLUMN "analysis_status" text DEFAULT 'pending' NOT NULL;
+ALTER TABLE "leads" ADD COLUMN IF NOT EXISTS "analysis_status" text DEFAULT 'pending' NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "leads" ADD COLUMN "call_status" text DEFAULT 'not_started' NOT NULL;
+ALTER TABLE "leads" ADD COLUMN IF NOT EXISTS "call_status" text DEFAULT 'not_started' NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "leads" ADD COLUMN "email_status" text DEFAULT 'not_started' NOT NULL;
+ALTER TABLE "leads" ADD COLUMN IF NOT EXISTS "email_status" text DEFAULT 'not_started' NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "leads" ADD COLUMN "whatsapp_status" text DEFAULT 'not_started' NOT NULL;
+ALTER TABLE "leads" ADD COLUMN IF NOT EXISTS "whatsapp_status" text DEFAULT 'not_started' NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "leads" ADD COLUMN "next_action" text DEFAULT 'review' NOT NULL;
+ALTER TABLE "leads" ADD COLUMN IF NOT EXISTS "next_action" text DEFAULT 'review' NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "leads" ADD COLUMN "next_action_at" timestamp with time zone;
+ALTER TABLE "leads" ADD COLUMN IF NOT EXISTS "next_action_at" timestamp with time zone;
 --> statement-breakpoint
-ALTER TABLE "leads" ADD COLUMN "contact_locked" boolean DEFAULT false NOT NULL;
+ALTER TABLE "leads" ADD COLUMN IF NOT EXISTS "contact_locked" boolean DEFAULT false NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "leads" ADD COLUMN "contact_lock_reason" text DEFAULT '' NOT NULL;
+ALTER TABLE "leads" ADD COLUMN IF NOT EXISTS "contact_lock_reason" text DEFAULT '' NOT NULL;
 --> statement-breakpoint
 UPDATE "leads"
 SET "instagram_url" = "website_url"
@@ -63,10 +63,22 @@ WHERE
   OR "tags" ? 'do-not-contact'
   OR "tags" ? 'gesperrt';
 --> statement-breakpoint
-ALTER TABLE "leads" ADD CONSTRAINT "leads_owner_id_users_id_fk" FOREIGN KEY ("owner_id") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;
+DO $
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'leads_owner_id_users_id_fk') THEN
+    ALTER TABLE "leads" ADD CONSTRAINT "leads_owner_id_users_id_fk"
+      FOREIGN KEY ("owner_id") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'leads_created_by_id_users_id_fk') THEN
+    ALTER TABLE "leads" ADD CONSTRAINT "leads_created_by_id_users_id_fk"
+      FOREIGN KEY ("created_by_id") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;
+  END IF;
+END $;
 --> statement-breakpoint
-ALTER TABLE "leads" ADD CONSTRAINT "leads_created_by_id_users_id_fk" FOREIGN KEY ("created_by_id") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;
+CREATE INDEX IF NOT EXISTS "leads_owner_idx" ON "leads" USING btree ("workspace_id","owner_id");
 --> statement-breakpoint
-CREATE INDEX "leads_owner_idx" ON "leads" USING btree ("workspace_id","owner_id");
+CREATE INDEX IF NOT EXISTS "leads_owner_user_idx" ON "leads" USING btree ("owner_id");
 --> statement-breakpoint
-CREATE INDEX "leads_next_action_idx" ON "leads" USING btree ("workspace_id","next_action_at");
+CREATE INDEX IF NOT EXISTS "leads_created_by_idx" ON "leads" USING btree ("created_by_id");
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "leads_next_action_idx" ON "leads" USING btree ("workspace_id","next_action_at");
