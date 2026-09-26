@@ -317,11 +317,10 @@ export default function WhatsAppWorkspace() {
             </div>
             {latestDraft && <div className={styles.draft}><div><strong>✦ KI-Vorschlag</strong><span>{latestDraft.metadata.handoff ? "Persönliche Prüfung" : "Zur Freigabe"}</span></div><p>{latestDraft.body}</p>{latestDraft.metadata.reason && <small>{latestDraft.metadata.reason}</small>}{latestDraft.metadata.usedKnowledge?.length ? <small>Wissen: {latestDraft.metadata.usedKnowledge.map((k) => k.title).join(" · ")}</small> : null}<button className={styles.secondary} onClick={() => editBody(latestDraft.body, latestDraft)}>In Nachricht übernehmen</button></div>}
             <form className={styles.composer} onSubmit={send}>
-              {detail.thread.consent !== "granted" && <p className={styles.warning}>Vor dem Versand die WhatsApp-Zustimmung dokumentieren.</p>}
               {staleDraft && <p className={styles.warning}>Der Kontakt wurde aktualisiert. Bitte den Verlauf prüfen und den Entwurf erneut übernehmen oder bearbeiten.</p>}
               <label className={styles.srOnly} htmlFor="whatsapp-message">Deine Nachricht</label><textarea id="whatsapp-message" rows={4} placeholder="Persönliche Nachricht schreiben …" value={body} maxLength={4_000} onChange={(event) => { setBody(event.target.value); setDraftId(undefined); if (composerVersion === null || staleDraft) setComposerVersion(detail.thread.version); sendKey.current = crypto.randomUUID(); }} />
               {attachment && <div className={styles.attachment}>{attachment.filename}<button type="button" aria-label="Anhang entfernen" onClick={() => setAttachment(null)}>×</button></div>}
-              <div className={styles.composerActions}><button type="button" className={styles.secondary} disabled={Boolean(busy)} onClick={makeDraft}>✦ {busy === "draft" ? "KI schreibt …" : "KI-Entwurf"}</button><button type="button" className={styles.textButton} disabled={Boolean(busy)} onClick={() => uploadRef.current?.click()}>Anhang</button><input ref={uploadRef} className={styles.srOnly} type="file" accept="image/jpeg,image/png,image/webp,application/pdf,audio/mpeg,audio/mp4,audio/ogg,audio/wav,audio/webm" onChange={upload} /><span className={styles.spacer} /><button className={styles.primary} disabled={Boolean(busy) || !data.connection.connected || detail.thread.consent !== "granted" || detail.thread.status === "closed" || staleDraft || (!body.trim() && !attachment)}>{busy === "send" ? "Wird gesendet …" : "Senden ↗"}</button></div>
+              <div className={styles.composerActions}><button type="button" className={styles.secondary} disabled={Boolean(busy)} onClick={makeDraft}>✦ {busy === "draft" ? "KI schreibt …" : "KI-Entwurf"}</button><button type="button" className={styles.textButton} disabled={Boolean(busy)} onClick={() => uploadRef.current?.click()}>Anhang</button><input ref={uploadRef} className={styles.srOnly} type="file" accept="image/jpeg,image/png,image/webp,application/pdf,audio/mpeg,audio/mp4,audio/ogg,audio/wav,audio/webm" onChange={upload} /><span className={styles.spacer} /><button className={styles.primary} disabled={Boolean(busy) || !data.connection.connected || detail.thread.status === "closed" || staleDraft || (!body.trim() && !attachment)}>{busy === "send" ? "Wird gesendet …" : "Senden ↗"}</button></div>
               <small>Mit einer manuellen Nachricht übernimmst du den Chat. Bilder, PDF und Audio bis 3 MB.</small>
             </form>
           </section>
@@ -365,13 +364,9 @@ export default function WhatsAppWorkspace() {
                 <button className={styles.secondary} disabled={Boolean(busy)} onClick={() => void action({ action: "handoff", threadId: selected })}>Chat übernehmen</button>
               </section>
               <section>
-                <h3>WhatsApp-Zustimmung</h3>
-                <span className={`${styles.badge} ${detail.thread.consent === "granted" ? styles.good : ""}`}>{detail.thread.consent === "granted" ? "Dokumentiert" : detail.thread.consent === "revoked" ? "Widerrufen" : "Noch offen"}</span>
-                {detail.thread.consentAt && <small>{dateLabel(detail.thread.consentAt)}</small>}
-                {detail.thread.consentNote && <p className={styles.hint}>{detail.thread.consentNote}</p>}
-                <label>Nachweis<textarea rows={3} value={consentNote} onChange={(event) => setConsentNote(event.target.value)} placeholder="Wann, wie und wofür wurde zugestimmt?" /></label>
-                <button className={styles.secondary} disabled={Boolean(busy) || consentNote.trim().length < 10} onClick={() => void action({ action: "update", threadId: selected, patch: { consent: "granted", consentNote } }).then((r) => { if (r) setConsentNote(""); })}>Zustimmung speichern</button>
-                <button className={styles.dangerButton} disabled={Boolean(busy) || detail.thread.consent === "revoked"} onClick={() => void action({ action: "update", threadId: selected, patch: { consent: "revoked", consentNote: "Vom Team gestoppt" } })}>Kontakt stoppen</button>
+                <h3>Kontaktsteuerung</h3>
+                <p className={styles.hint}>Freigaben werden außerhalb des Tools verwaltet. Gestoppte Kontakte bleiben hier weiterhin gesperrt.</p>
+                <button className={styles.dangerButton} disabled={Boolean(busy) || detail.thread.status === "closed"} onClick={() => void action({ action: "update", threadId: selected, patch: { status: "closed" } })}>Kontakt stoppen</button>
               </section>
             </details>
           </aside>
