@@ -39,3 +39,37 @@
 .kanbanChannels span[data-state="stopped"]{background:#f8e9e7;color:#a0524b}
 .kanbanEmpty{display:grid;min-height:70px;place-items:center;border:1px dashed rgba(17,16,20,.09);border-radius:11px;color:#aaa2a7;font-size:8px}
 @media(max-width:950px){.viewToggle{align-self:flex-start}.kanbanColumn{flex-basis:260px;min-height:480px}}
+
+/* Accessibility: readable defaults + per-user scaling */
+.root{--crm-font-scale:1.15}
+.fontControls{display:flex;align-items:center;gap:6px;flex:0 0 auto;border:1px solid rgba(17,16,20,.08);border-radius:11px;background:#fffdfb;padding:3px 5px 3px 9px}
+.fontControls>span{color:#746d72;font-size:calc(11px * var(--crm-font-scale));font-weight:800}
+.fontControls strong{min-width:42px;text-align:center;color:#3b353a;font-size:calc(11px * var(--crm-font-scale))}
+.fontControls button{min-width:44px;height:40px;border:0;border-radius:8px;background:#f2eeeb;color:#393438;font-size:calc(13px * var(--crm-font-scale));font-weight:900;cursor:pointer}
+.fontControls button:hover{background:#e9e3df}
+.tab,.tabActive,.search input,.statusBar strong,.statusBar span,.performance,.bulkCount span,.bulkCount button,.bulkActions button,.bulkOwner button,.bulkOwner select,.bulkDecisionList strong,.bulkDecisionList small,.bulkPreviewHead small,.bulkPreviewHead p,.bulkProgress small,.bulkPreviewActions button,.notice,.error,.loadMore button,.ownerSelect,.ownerName,.updated,.stage,.contact strong,.contact small,.nextAction strong,.nextAction small,.companyButton strong,.companyButton small,.tableCard th,.tableCard td,.kanbanHeader strong,.kanbanHeader>span,.kanbanTop strong,.kanbanTop small,.kanbanTop b,.kanbanCard p,.kanbanMeta,.kanbanEmpty{
+  font-size:calc(1em * var(--crm-font-scale));
+}
+.tableCard th{font-size:calc(10px * var(--crm-font-scale))}
+.tableCard td{font-size:calc(12px * var(--crm-font-scale));height:68px}
+.companyButton strong{font-size:calc(13px * var(--crm-font-scale))}
+.companyButton small,.contact small,.nextAction small{font-size:calc(10px * var(--crm-font-scale))}
+.contact strong,.nextAction strong{font-size:calc(11px * var(--crm-font-scale))}
+.stage,.ownerName,.updated{font-size:calc(10px * var(--crm-font-scale))}
+.score{font-size:calc(12px * var(--crm-font-scale))}
+.tab,.tabActive{font-size:calc(11px * var(--crm-font-scale));min-height:44px}
+.search{height:46px}
+.search input{font-size:calc(12px * var(--crm-font-scale))}
+.statusBar strong{font-size:calc(12px * var(--crm-font-scale))}
+.statusBar span,.performance{font-size:calc(10px * var(--crm-font-scale))}
+.ownerSelect{height:40px;font-size:calc(11px * var(--crm-font-scale))}
+.viewToggle button{min-width:72px;height:40px;font-size:calc(11px * var(--crm-font-scale))}
+.kanbanHeader strong{font-size:calc(12px * var(--crm-font-scale))}
+.kanbanTop strong{font-size:calc(12px * var(--crm-font-scale))}
+.kanbanTop small{font-size:calc(10px * var(--crm-font-scale))}
+.kanbanCard p{font-size:calc(11px * var(--crm-font-scale))}
+.kanbanMeta{font-size:calc(9px * var(--crm-font-scale))}
+.kanbanColumn{flex-basis:320px}
+.kanbanCard{padding:12px}
+.companyButton,.actionButton,.tab,.tabActive,.viewToggle button,.fontControls button,.loadMore button{min-height:44px}
+@media(max-width:950px){.toolbar{gap:10px}.fontControls{align-self:flex-start}.kanbanColumn{flex-basis:290px}}
