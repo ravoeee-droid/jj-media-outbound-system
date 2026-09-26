@@ -67,7 +67,7 @@ export async function POST(request: Request) {
         body,
         html,
         previewImageUrl: `${appBaseUrl}/api/preview/${lead.slug}`,
-        friendlyVideoUrl: `${appBaseUrl}/video/${lead.slug}`,
+        friendlyVideoUrl: `${appBaseUrl}/v/${lead.slug}`,
         mailUrl,
       });
     }
@@ -156,7 +156,7 @@ export async function POST(request: Request) {
         workspaceId: workspace.workspaceId,
         leadId: lead.id,
         type: "email_sent",
-        title: input.action === "send" ? "E-Mail über STRATO gesendet" : "Manueller STRATO-Versand bestätigt",
+        title: input.action === "send" ? "E-Mail versendet" : "Manueller Versand bestätigt",
         detail: subject,
       }),
     ]);

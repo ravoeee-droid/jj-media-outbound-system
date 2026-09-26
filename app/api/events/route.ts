@@ -6,7 +6,7 @@ import { sendTelegramMessage } from "@/lib/telegram";
 
 const eventInput = z.object({
   slug: z.string().trim().min(2).max(250),
-  type: z.enum(["view", "play", "progress", "calendar_click", "booking"]),
+  type: z.enum(["view", "play", "progress", "cta_click", "calendar_click", "booking"]),
   value: z.number().min(0).max(100).optional(),
   visitorId: z.string().max(120).optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
@@ -46,7 +46,7 @@ export async function POST(request: Request) {
     if (input.type === "progress" && input.value !== undefined && input.value >= 90 && lead.watchPercent < 90) {
       await notifyOnce(lead.workspaceId, `telegram_hot:${lead.id}:90`, `🚨 Sehr heißer Lead: ${Math.round(input.value)} % Watchtime\n\n${lead.company} hat fast das vollständige Video angesehen. Jetzt persönlich nachfassen.\n${landingUrl}`, landingUrl);
     }
-    if (input.type === "calendar_click") {
+    if (input.type === "cta_click" || input.type === "calendar_click") {
       await notifyOnce(lead.workspaceId, `telegram_calendar:${lead.id}`, `📅 Kalender geöffnet\n\n${lead.company} zeigt konkrete Terminabsicht.\n${landingUrl}`, landingUrl);
     }
     return Response.json({ ok: true });

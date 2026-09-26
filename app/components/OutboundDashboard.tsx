@@ -31,6 +31,23 @@ type Lead = {
   probability: number;
 };
 
+type ProductionState = {
+  lead: { id: string; company: string; slug: string; email: string; videoStatus: string };
+  checks: {
+    profile: boolean;
+    masterVideo: boolean;
+    video: boolean;
+    landing: boolean;
+    calendar: boolean;
+    email: boolean;
+    mailbox: boolean;
+  };
+  blockers: string[];
+  readyToRender: boolean;
+  readyToSend: boolean;
+  landingUrl: string;
+};
+
 const initialLeads: Lead[] = [];
 
 function statusClass(status: LeadStatus) {
@@ -121,6 +138,10 @@ export default function OutboundDashboard({ userName = "JJ-Media" }: { userName?
   const [uploadingProfileId, setUploadingProfileId] = useState<string | null>(null);
   const [manualComposerOpened, setManualComposerOpened] = useState(false);
   const [sendingEmail, setSendingEmail] = useState(false);
+  const [productionLead, setProductionLead] = useState<Lead | null>(null);
+  const [productionState, setProductionState] = useState<ProductionState | null>(null);
+  const [productionBusy, setProductionBusy] = useState("");
+  const [productionError, setProductionError] = useState("");
   const [autoFollowups, setAutoFollowups] = useState(false);
   const [integrations, setIntegrations] = useState({
     screenshotOne: false,
@@ -253,7 +274,7 @@ export default function OutboundDashboard({ userName = "JJ-Media" }: { userName?
   async function prepareEmail(lead: Lead) {
     if (!lead.email) {
       showToast("Für diesen Lead fehlt noch eine E-Mail-Adresse.");
-      return;
+      return false;
     }
     try {
       const response = await fetch("/api/outreach", {
@@ -269,19 +290,17 @@ export default function OutboundDashboard({ userName = "JJ-Media" }: { userName?
         body: payload.body || renderLeadTemplate(emailBody, lead),
         html: payload.html || "",
         previewImageUrl: payload.previewImageUrl || `${window.location.origin}/api/preview/${lead.slug}`,
-        friendlyVideoUrl: payload.friendlyVideoUrl || `${window.location.origin}/video/${lead.slug}`,
+        friendlyVideoUrl: payload.friendlyVideoUrl || `${window.location.origin}/v/${lead.slug}`,
       });
       setManualComposerOpened(false);
+      return true;
     } catch (error) {
       showToast(error instanceof Error ? error.message : "E-Mail konnte nicht vorbereitet werden.");
+      return false;
     }
   }
 
   async function generateOneLead(lead: Lead, quiet = false) {
-    if (!lead.url) {
-      if (!quiet) showToast("Für diesen Lead fehlt noch das Instagram-Profil.");
-      return false;
-    }
     setLeads((current) => current.map((item) => item.id === lead.id
       ? { ...item, status: "Wird erstellt", videoStatus: "processing", updated: "wird vorbereitet" }
       : item));
@@ -315,6 +334,69 @@ export default function OutboundDashboard({ userName = "JJ-Media" }: { userName?
 
   async function generateLeadVideo(lead: Lead) {
     await generateOneLead(lead);
+  }
+
+  async function loadProductionState(leadId: string) {
+    const response = await fetch(`/api/leads/${leadId}/readiness`, { cache: "no-store" });
+    const payload = await response.json() as ProductionState & { error?: string };
+    if (!response.ok) throw new Error(payload.error || "Produktionsstatus konnte nicht geladen werden.");
+    setProductionState(payload);
+    return payload;
+  }
+
+  async function openProductionFlow(lead: Lead) {
+    setProductionLead(lead);
+    setProductionState(null);
+    setProductionError("");
+    setProductionBusy("check");
+    try {
+      await loadProductionState(lead.id);
+    } catch (error) {
+      setProductionError(error instanceof Error ? error.message : "Produktionsstatus konnte nicht geladen werden.");
+    } finally {
+      setProductionBusy("");
+    }
+  }
+
+  async function buildProduction() {
+    if (!productionLead || productionBusy) return;
+    setProductionError("");
+    setProductionBusy("render");
+    try {
+      const current = productionState || await loadProductionState(productionLead.id);
+      if (!current.readyToRender) {
+        const first = current.blockers.find((item) => item.includes("Profil") || item.includes("Mastervideo"));
+        throw new Error(first || "Video kann noch nicht erstellt werden.");
+      }
+      const ok = current.checks.video ? true : await generateOneLead(productionLead, true);
+      if (!ok) throw new Error("Video konnte nicht erstellt werden.");
+      await loadProductionState(productionLead.id);
+      showToast(`${productionLead.company}: Video und Landingpage sind bereit.`);
+    } catch (error) {
+      setProductionError(error instanceof Error ? error.message : "Vorbereitung fehlgeschlagen.");
+    } finally {
+      setProductionBusy("");
+    }
+  }
+
+  async function continueToSend() {
+    if (!productionLead || productionBusy) return;
+    setProductionError("");
+    setProductionBusy("email");
+    try {
+      const current = await loadProductionState(productionLead.id);
+      if (!current.readyToSend) {
+        throw new Error(current.blockers[0] || "Noch nicht versandbereit.");
+      }
+      const ok = await prepareEmail(productionLead);
+      if (!ok) throw new Error("E-Mail konnte nicht vorbereitet werden.");
+      setProductionLead(null);
+      setProductionState(null);
+    } catch (error) {
+      setProductionError(error instanceof Error ? error.message : "E-Mail konnte nicht vorbereitet werden.");
+    } finally {
+      setProductionBusy("");
+    }
   }
 
   async function uploadProfileScreenshot(lead: Lead, event: ChangeEvent<HTMLInputElement>) {
@@ -719,7 +801,7 @@ export default function OutboundDashboard({ userName = "JJ-Media" }: { userName?
                       <td><span className={statusClass(lead.status)}><i />{lead.status}</span></td>
                       <td><strong className="watchtime">{lead.watch}</strong></td>
                       <td><span className="muted">{lead.updated}</span></td>
-                      <td><div className="row-actions"><button className="icon-button" onClick={() => generateLeadVideo(lead)} aria-label={`Video für ${lead.company} erstellen`}>▶</button><button className="icon-button" onClick={() => prepareEmail(lead)} aria-label={`E-Mail an ${lead.company} vorbereiten`}>✉</button><a className="icon-button" href={`/v/${lead.slug}`} aria-label={`Landingpage für ${lead.company} öffnen`}>↗</a></div></td>
+                      <td><div className="row-actions"><button className="button button--primary" onClick={() => void openProductionFlow(lead)}>Vorbereiten & senden</button><a className="icon-button" href={`/v/${lead.slug}`} aria-label={`Landingpage für ${lead.company} öffnen`}>↗</a></div></td>
                     </tr>
                   ))}
                 </tbody>
@@ -755,7 +837,7 @@ export default function OutboundDashboard({ userName = "JJ-Media" }: { userName?
                           <td><span className="muted">{lead.email || "Fehlt noch"}</span></td>
                           <td><span className={statusClass(lead.status)}><i />{lead.status}</span></td>
                           <td><strong className="watchtime">{lead.watch}</strong></td>
-                          <td><div className="table-action-group"><button onClick={() => setSelectedLeadId(lead.id)}>CRM</button><Link href={`/dashboard/whatsapp?lead=${lead.id}`}>WhatsApp</Link><button onClick={() => generateLeadVideo(lead)} disabled={lead.videoStatus === "processing"}>{lead.videoStatus === "processing" ? "Erstellt …" : lead.videoStatus === "ready" ? "Video neu" : "Video erstellen"}</button><label className="table-upload-action">{uploadingProfileId === lead.id ? "Upload …" : "IG-Screenshot"}<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => void uploadProfileScreenshot(lead, event)} disabled={Boolean(uploadingProfileId)} /></label><button onClick={() => prepareEmail(lead)}>E-Mail</button><a href={`/v/${lead.slug}`} target="_blank" rel="noreferrer">LP öffnen</a></div></td>
+                          <td><div className="table-action-group"><button className="production-launch" onClick={() => void openProductionFlow(lead)}>Akquise starten →</button><button onClick={() => setSelectedLeadId(lead.id)}>CRM</button><Link href={`/dashboard/whatsapp?lead=${lead.id}`}>WhatsApp</Link><label className="table-upload-action">{uploadingProfileId === lead.id ? "Upload …" : "Profil-Screenshot"}<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => void uploadProfileScreenshot(lead, event)} disabled={Boolean(uploadingProfileId)} /></label><a href={`/v/${lead.slug}`} target="_blank" rel="noreferrer">LP öffnen</a></div></td>
                         </tr>
                       ))}
                     </tbody>
@@ -973,6 +1055,64 @@ export default function OutboundDashboard({ userName = "JJ-Media" }: { userName?
             </article>
 
             <div className="template-note"><strong>Wichtiger Hebel:</strong> Nicht in der Nachricht alles verkaufen. Ihr einziger Job ist, den Klick auf die persönliche Videoseite auszulösen.</div>
+          </section>
+        </div>
+      )}
+
+      {productionLead && (
+        <div className="modal-backdrop modal-backdrop--center" role="presentation" onMouseDown={() => setProductionLead(null)}>
+          <section className="production-flow" role="dialog" aria-modal="true" aria-labelledby="production-flow-title" onMouseDown={(event) => event.stopPropagation()}>
+            <button className="modal-close" onClick={() => setProductionLead(null)} aria-label="Schließen">×</button>
+            <p className="eyebrow eyebrow--orange">1 KLICK BIS ZUM VERSAND</p>
+            <h2 id="production-flow-title">{productionLead.company}</h2>
+            <p className="production-flow__intro">Das System prüft automatisch alles, was für eine starke persönliche Akquise-Seite nötig ist. Du musst nur die fehlenden Punkte ergänzen.</p>
+
+            {productionBusy === "check" && <div className="production-loading">Produktionsstrecke wird geprüft …</div>}
+
+            {productionState && (
+              <>
+                <div className="production-checks">
+                  {[
+                    ["Profil", productionState.checks.profile, "Instagram-Link oder manueller Screenshot"],
+                    ["Jessica-Video", productionState.checks.masterVideo, "Globales Mastervideo"],
+                    ["Persönliches MP4", productionState.checks.video, "Für diesen Lead gerendert"],
+                    ["Landingpage", productionState.checks.landing, productionState.landingUrl],
+                    ["Kalender", productionState.checks.calendar, "Direkte Terminbuchung"],
+                    ["E-Mail", productionState.checks.email && productionState.checks.mailbox, "Adresse + verbundenes Postfach"],
+                  ].map(([label, ok, note]) => (
+                    <div className={`production-check ${ok ? "is-ready" : "is-missing"}`} key={String(label)}>
+                      <span>{ok ? "✓" : "!"}</span>
+                      <div><strong>{label}</strong><small>{note}</small></div>
+                      <b>{ok ? "Bereit" : "Fehlt"}</b>
+                    </div>
+                  ))}
+                </div>
+
+                {productionState.blockers.length > 0 && (
+                  <div className="production-blockers">
+                    <strong>Noch zu erledigen</strong>
+                    {productionState.blockers.map((item) => <span key={item}>• {item}</span>)}
+                  </div>
+                )}
+
+                <div className="production-actions">
+                  {!productionState.checks.masterVideo && <button className="button button--soft" onClick={() => { setProductionLead(null); setActiveSection("Studio"); }}>Jessica-Video im Studio hinterlegen</button>}
+                  {!productionState.checks.calendar && <button className="button button--soft" onClick={() => { setProductionLead(null); setActiveSection("Integrationen"); }}>Kalender verbinden</button>}
+                  {!productionState.checks.email && <button className="button button--soft" onClick={() => { setProductionLead(null); setSelectedLeadId(productionLead.id); }}>E-Mail im CRM ergänzen</button>}
+                  {productionState.checks.profile && productionState.checks.masterVideo && !productionState.checks.video && (
+                    <button className="button button--primary" onClick={() => void buildProduction()} disabled={productionBusy === "render"}>{productionBusy === "render" ? "Video + Landingpage werden erstellt …" : "Video + Landingpage erstellen →"}</button>
+                  )}
+                  {productionState.checks.video && productionState.checks.landing && (
+                    <a className="button button--ghost" href={productionState.landingUrl} target="_blank" rel="noreferrer">Landingpage prüfen ↗</a>
+                  )}
+                  {productionState.readyToSend && (
+                    <button className="button button--primary" onClick={() => void continueToSend()} disabled={productionBusy === "email"}>{productionBusy === "email" ? "E-Mail wird vorbereitet …" : "E-Mail prüfen & abschicken →"}</button>
+                  )}
+                </div>
+              </>
+            )}
+
+            {productionError && <div className="production-error">{productionError}</div>}
           </section>
         </div>
       )}
