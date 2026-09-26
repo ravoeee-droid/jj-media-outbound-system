@@ -236,7 +236,9 @@ export default function WhatsAppWorkspace() {
       <span className={`${styles.dot} ${data?.connection.connected ? styles.connected : ""}`} /><strong>{data?.connection.message || "Verbindung wird geprüft …"}</strong>
       <span className={styles.spacer} />
       <span>{data?.connection.aiReady ? (data.connection.aiMessage || "Lokale KI bereit") : "Lokale KI aus"}</span>
-      {!data?.connection.aiReady && <button className={styles.primary} type="button" onClick={startLocalAi}>Lokale KI starten</button>}
+      <button className={data?.connection.aiReady ? styles.secondary : styles.primary} type="button" onClick={startLocalAi}>
+        {data?.connection.aiReady ? "Lokale KI neu starten" : "Lokale KI starten"}
+      </button>
       {data?.connection.aiReady && <span className={styles.badge}>✓ {data.connection.aiModel || "Lokal"}</span>}
       <span>{config.enabled ? modeLabels[config.defaultMode] : "KI pausiert"}</span>
       <button className={styles.textButton} onClick={() => setTab("connection")}>Verbindungen</button>
