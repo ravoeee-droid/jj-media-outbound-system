@@ -109,6 +109,7 @@ function chunks<T>(items: T[], size: number) {
 export default function CrmWorkspace() {
   const [activeScope, setActiveScope] = useState("mine");
   const [query, setQuery] = useState("");
+  const [viewMode, setViewMode] = useState<"table" | "kanban">("table");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [data, setData] = useState<CrmPayload | null>(null);
   const [leads, setLeads] = useState<CrmLead[]>([]);
@@ -409,6 +410,36 @@ export default function CrmWorkspace() {
   }
 
   const ownerOptions = data?.tabs.members || [];
+  const kanbanStages = [
+    "new",
+    "qualified",
+    "contact_ready",
+    "contacted",
+    "replied",
+    "call_booked",
+    "won",
+    "lost",
+  ] as const;
+
+  async function moveLeadStage(lead: CrmLead, pipelineStage: string) {
+    if (!data?.permissions.canManageLeads || lead.pipelineStage === pipelineStage) return;
+    const previous = lead.pipelineStage;
+    setLeads((current) => current.map((item) => item.id === lead.id ? { ...item, pipelineStage } : item));
+    try {
+      const response = await fetch("/api/crm", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: lead.id, pipelineStage }),
+      });
+      const payload = await response.json() as { lead?: Record<string, unknown>; error?: string };
+      if (!response.ok || !payload.lead) throw new Error(payload.error || "Status konnte nicht gespeichert werden.");
+      handleUpdated(payload.lead);
+      setNotice(`${lead.company} → ${stageLabel[pipelineStage] || pipelineStage}`);
+    } catch (caught) {
+      setLeads((current) => current.map((item) => item.id === lead.id ? { ...item, pipelineStage: previous } : item));
+      setError(caught instanceof Error ? caught.message : "Status konnte nicht gespeichert werden.");
+    }
+  }
 
   return (
     <div className={styles.root}>
@@ -426,6 +457,10 @@ export default function CrmWorkspace() {
               <span>{tab.label}</span><strong>{tab.count}</strong>
             </button>
           ))}
+        </div>
+        <div className={styles.viewToggle} aria-label="CRM Ansicht">
+          <button type="button" className={viewMode === "table" ? styles.viewActive : ""} onClick={() => setViewMode("table")}>☷ Liste</button>
+          <button type="button" className={viewMode === "kanban" ? styles.viewActive : ""} onClick={() => setViewMode("kanban")}>▥ Kanban</button>
         </div>
         <label className={styles.search}>
           <span>⌕</span>
@@ -507,102 +542,166 @@ export default function CrmWorkspace() {
       {notice && <div className={styles.notice}>{notice}</div>}
       {error && <div className={styles.error}>{error}</div>}
 
-      <section className={styles.tableCard}>
-        <div className={styles.tableWrap}>
-          <table>
-            <thead>
-              <tr>
-                {data?.permissions.canManageLeads && (
-                  <th className={styles.selectColumn}>
-                    <input
-                      type="checkbox"
-                      aria-label="Bis zu 30 sichtbare Leads auswählen"
-                      checked={allVisibleSelected}
-                      onChange={toggleVisibleSelection}
-                      disabled={!leads.length || bulkBusy}
-                    />
-                  </th>
-                )}
-                <th>Unternehmen</th>
-                <th>Kontakt</th>
-                <th>Status</th>
-                <th>Nächster Schritt</th>
-                <th>Kanäle</th>
-                <th>Owner</th>
-                <th>Score</th>
-                <th>Aktualisiert</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading && leads.length === 0 ? (
-                Array.from({ length: 8 }).map((_, index) => <SkeletonRow key={index} selectable={Boolean(data?.permissions.canManageLeads)} />)
-              ) : leads.length ? leads.map((lead) => (
-                <tr key={lead.id} className={lead.contactLocked ? styles.lockedRow : undefined}>
+      {viewMode === "kanban" ? (
+        <section className={styles.kanbanBoard}>
+          <div className={styles.kanbanScroller}>
+            {kanbanStages.map((stage) => {
+              const items = leads.filter((lead) => lead.pipelineStage === stage);
+              return (
+                <section
+                  className={styles.kanbanColumn}
+                  data-stage={stage}
+                  key={stage}
+                  onDragOver={(event) => { if (data?.permissions.canManageLeads) event.preventDefault(); }}
+                  onDrop={(event) => {
+                    const leadId = event.dataTransfer.getData("text/lead-id");
+                    const lead = leads.find((item) => item.id === leadId);
+                    if (lead) void moveLeadStage(lead, stage);
+                  }}
+                >
+                  <header className={styles.kanbanHeader}>
+                    <div><i /><strong>{stageLabel[stage]}</strong></div>
+                    <span>{items.length}</span>
+                  </header>
+                  <div className={styles.kanbanCards}>
+                    {items.map((lead) => (
+                      <article
+                        key={lead.id}
+                        className={styles.kanbanCard}
+                        draggable={Boolean(data?.permissions.canManageLeads)}
+                        onDragStart={(event) => event.dataTransfer.setData("text/lead-id", lead.id)}
+                        onClick={() => setSelectedLeadId(lead.id)}
+                      >
+                        <div className={styles.kanbanTop}>
+                          <span className={styles.companyMark}>{initials(lead.company)}</span>
+                          <div><strong>{lead.company}</strong><small>{lead.contact || "Ansprechpartner offen"}</small></div>
+                          <b>{lead.salesPriority}</b>
+                        </div>
+                        <p>{lead.contactLocked ? "Kontakt gesperrt" : actionLabel[lead.nextAction] || lead.nextAction}</p>
+                        <div className={styles.kanbanMeta}>
+                          <span>{lead.ownerName || "Unzugeordnet"}</span>
+                          <span>{formatDate(lead.nextActionAt)}</span>
+                        </div>
+                        <div className={styles.kanbanChannels}>
+                          <span data-state={channelState(lead.callStatus)}>☎</span>
+                          <span data-state={channelState(lead.emailStatus)}>✉</span>
+                          <span data-state={channelState(lead.whatsappStatus)}>◉</span>
+                          <span data-state={lead.videoStatus === "ready" ? "ready" : lead.videoStatus === "failed" ? "stopped" : "idle"}>▶</span>
+                        </div>
+                      </article>
+                    ))}
+                    {!items.length && <div className={styles.kanbanEmpty}>Keine Leads</div>}
+                  </div>
+                </section>
+              );
+            })}
+          </div>
+          {page?.hasMore && (
+            <div className={styles.loadMore}>
+              <button type="button" onClick={() => void loadMore()} disabled={loadingMore || bulkBusy}>{loadingMore ? "Weitere Leads werden geladen …" : "Weitere 50 Leads laden"}</button>
+            </div>
+          )}
+        </section>
+      ) : (
+        <section className={styles.tableCard}>
+          <div className={styles.tableWrap}>
+            <table>
+              <thead>
+                <tr>
                   {data?.permissions.canManageLeads && (
-                    <td className={styles.selectColumn}>
+                    <th className={styles.selectColumn}>
                       <input
                         type="checkbox"
-                        checked={selectedIds.has(lead.id)}
-                        onChange={() => toggleLeadSelection(lead.id)}
-                        disabled={bulkBusy}
-                        aria-label={`${lead.company} auswählen`}
+                        aria-label="Bis zu 30 sichtbare Leads auswählen"
+                        checked={allVisibleSelected}
+                        onChange={toggleVisibleSelection}
+                        disabled={!leads.length || bulkBusy}
                       />
-                    </td>
+                    </th>
                   )}
-                  <td>
-                    <button className={styles.companyButton} onClick={() => setSelectedLeadId(lead.id)}>
-                      <span className={styles.companyMark}>{initials(lead.company)}</span>
-                      <span><strong>{lead.company}</strong><small>{[lead.city, lead.region].filter(Boolean).join(", ") || "Standort offen"}</small></span>
-                    </button>
-                  </td>
-                  <td>
-                    <div className={styles.contact}><strong>{lead.contact || "Ansprechpartner offen"}</strong><small>{lead.phone || lead.email || "Kontaktdaten offen"}</small></div>
-                  </td>
-                  <td><span className={styles.stage} data-stage={lead.pipelineStage}>{stageLabel[lead.pipelineStage] || lead.pipelineStage}</span></td>
-                  <td>
-                    <div className={styles.nextAction}>
-                      <strong>{lead.contactLocked ? "Gesperrt" : actionLabel[lead.nextAction] || lead.nextAction}</strong>
-                      <small>{lead.contactLocked ? "Kein weiterer Kontakt" : formatDate(lead.nextActionAt)}</small>
-                    </div>
-                  </td>
-                  <td>
-                    <div className={styles.channels} aria-label="Kontaktkanäle">
-                      <span data-state={channelState(lead.callStatus)} title={"Call: " + lead.callStatus}>☎</span>
-                      <span data-state={channelState(lead.emailStatus)} title={"E-Mail: " + lead.emailStatus}>✉</span>
-                      <span data-state={channelState(lead.whatsappStatus)} title={"WhatsApp: " + lead.whatsappStatus}>◉</span>
-                      <span data-state={lead.videoStatus === "ready" ? "ready" : lead.videoStatus === "failed" ? "stopped" : "idle"} title={"Video: " + lead.videoStatus}>▶</span>
-                    </div>
-                  </td>
-                  <td>
-                    {data?.permissions.canViewAll && data.permissions.canManageLeads ? (
-                      <select
-                        className={styles.ownerSelect}
-                        value={lead.ownerId || ""}
-                        disabled={savingOwnerId === lead.id || bulkBusy}
-                        onChange={(event) => void changeOwner(lead, event.target.value)}
-                        aria-label={`Owner für ${lead.company}`}
-                      >
-                        <option value="">Unzugeordnet</option>
-                        {ownerOptions.map((owner) => <option key={owner.userId} value={owner.userId}>{owner.name}</option>)}
-                      </select>
-                    ) : <span className={styles.ownerName}>{lead.ownerName || "Unzugeordnet"}</span>}
-                  </td>
-                  <td><span className={styles.score}>{lead.salesPriority}</span></td>
-                  <td><span className={styles.updated}>{formatDate(lead.updatedAt)}</span></td>
+                  <th>Unternehmen</th>
+                  <th>Kontakt</th>
+                  <th>Status</th>
+                  <th>Nächster Schritt</th>
+                  <th>Kanäle</th>
+                  <th>Owner</th>
+                  <th>Score</th>
+                  <th>Aktualisiert</th>
                 </tr>
-              )) : (
-                <tr><td colSpan={data?.permissions.canManageLeads ? 9 : 8}><div className={styles.empty}>{debouncedQuery ? "Keine passenden Leads gefunden." : "In diesem CRM-Bereich liegen noch keine Leads."}</div></td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {page?.hasMore && (
-          <div className={styles.loadMore}>
-            <button type="button" onClick={() => void loadMore()} disabled={loadingMore || bulkBusy}>{loadingMore ? "Weitere Leads werden geladen …" : "Weitere 50 Leads laden"}</button>
+              </thead>
+              <tbody>
+                {loading && leads.length === 0 ? (
+                  Array.from({ length: 8 }).map((_, index) => <SkeletonRow key={index} selectable={Boolean(data?.permissions.canManageLeads)} />)
+                ) : leads.length ? leads.map((lead) => (
+                  <tr key={lead.id} className={lead.contactLocked ? styles.lockedRow : undefined}>
+                    {data?.permissions.canManageLeads && (
+                      <td className={styles.selectColumn}>
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(lead.id)}
+                          onChange={() => toggleLeadSelection(lead.id)}
+                          disabled={bulkBusy}
+                          aria-label={`${lead.company} auswählen`}
+                        />
+                      </td>
+                    )}
+                    <td>
+                      <button className={styles.companyButton} onClick={() => setSelectedLeadId(lead.id)}>
+                        <span className={styles.companyMark}>{initials(lead.company)}</span>
+                        <span><strong>{lead.company}</strong><small>{[lead.city, lead.region].filter(Boolean).join(", ") || "Standort offen"}</small></span>
+                      </button>
+                    </td>
+                    <td>
+                      <div className={styles.contact}><strong>{lead.contact || "Ansprechpartner offen"}</strong><small>{lead.phone || lead.email || "Kontaktdaten offen"}</small></div>
+                    </td>
+                    <td><span className={styles.stage} data-stage={lead.pipelineStage}>{stageLabel[lead.pipelineStage] || lead.pipelineStage}</span></td>
+                    <td>
+                      <div className={styles.nextAction}>
+                        <strong>{lead.contactLocked ? "Gesperrt" : actionLabel[lead.nextAction] || lead.nextAction}</strong>
+                        <small>{lead.contactLocked ? "Kein weiterer Kontakt" : formatDate(lead.nextActionAt)}</small>
+                      </div>
+                    </td>
+                    <td>
+                      <div className={styles.channels} aria-label="Kontaktkanäle">
+                        <span data-state={channelState(lead.callStatus)} title={"Call: " + lead.callStatus}>☎</span>
+                        <span data-state={channelState(lead.emailStatus)} title={"E-Mail: " + lead.emailStatus}>✉</span>
+                        <span data-state={channelState(lead.whatsappStatus)} title={"WhatsApp: " + lead.whatsappStatus}>◉</span>
+                        <span data-state={lead.videoStatus === "ready" ? "ready" : lead.videoStatus === "failed" ? "stopped" : "idle"} title={"Video: " + lead.videoStatus}>▶</span>
+                      </div>
+                    </td>
+                    <td>
+                      {data?.permissions.canViewAll && data.permissions.canManageLeads ? (
+                        <select
+                          className={styles.ownerSelect}
+                          value={lead.ownerId || ""}
+                          disabled={savingOwnerId === lead.id || bulkBusy}
+                          onChange={(event) => void changeOwner(lead, event.target.value)}
+                          aria-label={`Owner für ${lead.company}`}
+                        >
+                          <option value="">Unzugeordnet</option>
+                          {ownerOptions.map((owner) => <option key={owner.userId} value={owner.userId}>{owner.name}</option>)}
+                        </select>
+                      ) : <span className={styles.ownerName}>{lead.ownerName || "Unzugeordnet"}</span>}
+                    </td>
+                    <td><span className={styles.score}>{lead.salesPriority}</span></td>
+                    <td><span className={styles.updated}>{formatDate(lead.updatedAt)}</span></td>
+                  </tr>
+                )) : (
+                  <tr><td colSpan={data?.permissions.canManageLeads ? 9 : 8}><div className={styles.empty}>{debouncedQuery ? "Keine passenden Leads gefunden." : "In diesem CRM-Bereich liegen noch keine Leads."}</div></td></tr>
+                )}
+              </tbody>
+            </table>
           </div>
-        )}
-      </section>
+
+          {page?.hasMore && (
+            <div className={styles.loadMore}>
+              <button type="button" onClick={() => void loadMore()} disabled={loadingMore || bulkBusy}>{loadingMore ? "Weitere Leads werden geladen …" : "Weitere 50 Leads laden"}</button>
+            </div>
+          )}
+        </section>
+
+
+      )}
 
       {selectedLeadId && (
         <LeadCrmPanel
