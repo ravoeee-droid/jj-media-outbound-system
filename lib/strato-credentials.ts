@@ -4,6 +4,14 @@ import { getDb } from "@/db";
 import { settings } from "@/db/schema";
 
 const KEY = "strato_mail_credentials_v1";
+const ACCOUNT_KEY_PREFIX = "strato_mail_credentials_account_v1:";
+const BOOTSTRAP_ACCOUNTS = [
+  { email: "jessica.just@jj-media.info", senderName: "Jessica Just" },
+] as const;
+
+function accountKey(email: string) {
+  return ACCOUNT_KEY_PREFIX + email.trim().toLowerCase();
+}
 
 export type StoredStratoCredentials = {
   email: string;
@@ -45,11 +53,12 @@ function decrypt(value: string) {
   ]).toString("utf8");
 }
 
-export async function getStoredStratoCredentials(workspaceId: string): Promise<StoredStratoCredentials | null> {
+export async function getStoredStratoCredentials(workspaceId: string, email?: string): Promise<StoredStratoCredentials | null> {
+  const key = email ? accountKey(email) : KEY;
   const [row] = await getDb()
     .select({ value: settings.value })
     .from(settings)
-    .where(and(eq(settings.workspaceId, workspaceId), eq(settings.key, KEY)))
+    .where(and(eq(settings.workspaceId, workspaceId), eq(settings.key, key)))
     .limit(1);
 
   if (!row?.value) return null;
@@ -69,6 +78,7 @@ export async function getStoredStratoCredentials(workspaceId: string): Promise<S
 export async function saveStoredStratoCredentials(
   workspaceId: string,
   credentials: StoredStratoCredentials,
+  accountScoped = false,
 ) {
   const email = credentials.email.trim().toLowerCase();
   const senderName = credentials.senderName.trim() || "JJ-Media";
@@ -84,7 +94,7 @@ export async function saveStoredStratoCredentials(
 
   await getDb()
     .insert(settings)
-    .values({ workspaceId, key: KEY, value })
+    .values({ workspaceId, key: accountScoped ? accountKey(email) : KEY, value })
     .onConflictDoUpdate({
       target: [settings.workspaceId, settings.key],
       set: { value, updatedAt: new Date() },
@@ -93,8 +103,47 @@ export async function saveStoredStratoCredentials(
   return { email, senderName };
 }
 
-export async function deleteStoredStratoCredentials(workspaceId: string) {
+export async function deleteStoredStratoCredentials(workspaceId: string, email?: string) {
   await getDb()
     .delete(settings)
-    .where(and(eq(settings.workspaceId, workspaceId), eq(settings.key, KEY)));
+    .where(and(eq(settings.workspaceId, workspaceId), eq(settings.key, email ? accountKey(email) : KEY)));
+}
+
+export async function ensureBootstrapStratoAccounts(workspaceId: string) {
+  const primary = await getStoredStratoCredentials(workspaceId);
+  if (!primary) return;
+
+  for (const account of BOOTSTRAP_ACCOUNTS) {
+    const existing = await getStoredStratoCredentials(workspaceId, account.email);
+    if (existing) continue;
+    await saveStoredStratoCredentials(workspaceId, {
+      email: account.email,
+      password: primary.password,
+      senderName: account.senderName,
+    }, true);
+  }
+}
+
+export async function getStoredStratoAccounts(workspaceId: string) {
+  await ensureBootstrapStratoAccounts(workspaceId);
+  const rows = await getDb()
+    .select({ key: settings.key, value: settings.value })
+    .from(settings)
+    .where(eq(settings.workspaceId, workspaceId));
+
+  const accounts: Array<{ email: string; senderName: string; primary: boolean }> = [];
+  for (const row of rows) {
+    if (row.key !== KEY && !row.key.startsWith(ACCOUNT_KEY_PREFIX)) continue;
+    try {
+      const parsed = JSON.parse(row.value) as { email?: unknown; senderName?: unknown };
+      if (typeof parsed.email !== "string") continue;
+      accounts.push({
+        email: parsed.email.trim().toLowerCase(),
+        senderName: typeof parsed.senderName === "string" && parsed.senderName.trim() ? parsed.senderName.trim() : "JJ-Media",
+        primary: row.key === KEY,
+      });
+    } catch { /* ignore malformed stored account */ }
+  }
+
+  return accounts.sort((a, b) => Number(b.primary) - Number(a.primary) || a.email.localeCompare(b.email));
 }
