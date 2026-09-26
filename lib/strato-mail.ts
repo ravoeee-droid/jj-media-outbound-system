@@ -580,8 +580,12 @@ export async function listStratoMailThreads(options: { view?: MailView; q?: stri
   const c = await config(workspaceId);
   const client = await ImapClient.open(c);
   try {
-    const folders = await getFolders(client);
     const view = options.view || "inbox";
+    // STRATO can be very slow when enumerating all folders. Inbox-style views do not
+    // need LIST at all, so go straight to INBOX and keep the first paint fast.
+    const folders = (view === "inbox" || view === "unread" || view === "starred")
+      ? { inbox: "INBOX", sent: "", drafts: "", trash: "", junk: "", archive: "", all: "" }
+      : await getFolders(client);
     const folder = folderForView(view, folders);
     await client.execute(`SELECT ${imapQuote(folder)}`);
     const uids = parseUidSearch(await client.execute(`UID SEARCH ${searchCriteria(view, options.q || "")}`));
@@ -796,7 +800,10 @@ export async function sendStratoMessage(args: { to: string; cc?: string; bcc?: s
   const smtp = await SmtpClient.open(c);
   try { await smtp.send(raw, recipients, c.email); }
   finally { await smtp.quit(); }
-  await appendCopy(raw, "sent", c).catch((error) => console.warn("STRATO Sent-Kopie konnte nicht gespeichert werden", error));
+  // Do not block the user-facing send request on a second IMAP roundtrip.
+  // SMTP acceptance means the message is sent. STRATO's IMAP folder sync can be
+  // noticeably slower and previously caused the whole request to hit Vercel's 60s limit.
+  void appendCopy(raw, "sent", c).catch((error) => console.warn("STRATO Sent-Kopie konnte nicht gespeichert werden", error));
   return { id: messageId, threadId: messageId };
 }
 
