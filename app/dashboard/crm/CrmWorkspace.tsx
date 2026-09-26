@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import LeadCrmPanel from "@/app/components/LeadCrmPanel";
 import styles from "./CrmWorkspace.module.css";
 
@@ -110,6 +110,7 @@ export default function CrmWorkspace() {
   const [activeScope, setActiveScope] = useState("mine");
   const [query, setQuery] = useState("");
   const [viewMode, setViewMode] = useState<"table" | "kanban">("table");
+  const [fontScale, setFontScale] = useState(1.15);
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [data, setData] = useState<CrmPayload | null>(null);
   const [leads, setLeads] = useState<CrmLead[]>([]);
@@ -133,6 +134,15 @@ export default function CrmWorkspace() {
     const timer = window.setTimeout(() => setDebouncedQuery(query.trim()), 220);
     return () => window.clearTimeout(timer);
   }, [query]);
+
+  useEffect(() => {
+    const saved = Number(window.localStorage.getItem("crm-font-scale"));
+    if (Number.isFinite(saved) && saved >= 1 && saved <= 1.6) setFontScale(saved);
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem("crm-font-scale", String(fontScale));
+  }, [fontScale]);
 
   const fetchLeads = useCallback(async ({
     scope,
@@ -442,7 +452,7 @@ export default function CrmWorkspace() {
   }
 
   return (
-    <div className={styles.root}>
+    <div className={styles.root} style={{ "--crm-font-scale": fontScale } as CSSProperties}>
       <section className={styles.toolbar}>
         <div className={styles.tabs} role="tablist" aria-label="CRM Bereiche">
           {tabs.map((tab) => (
@@ -461,6 +471,12 @@ export default function CrmWorkspace() {
         <div className={styles.viewToggle} aria-label="CRM Ansicht">
           <button type="button" className={viewMode === "table" ? styles.viewActive : ""} onClick={() => setViewMode("table")}>☷ Liste</button>
           <button type="button" className={viewMode === "kanban" ? styles.viewActive : ""} onClick={() => setViewMode("kanban")}>▥ Kanban</button>
+        </div>
+        <div className={styles.fontControls} aria-label="Schriftgröße einstellen">
+          <span>Schrift</span>
+          <button type="button" aria-label="Schrift verkleinern" onClick={() => setFontScale((value) => Math.max(1, Number((value - 0.1).toFixed(2))))}>A−</button>
+          <strong>{Math.round(fontScale * 100)}%</strong>
+          <button type="button" aria-label="Schrift vergrößern" onClick={() => setFontScale((value) => Math.min(1.6, Number((value + 0.1).toFixed(2))))}>A+</button>
         </div>
         <label className={styles.search}>
           <span>⌕</span>
