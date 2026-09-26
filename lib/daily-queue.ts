@@ -158,7 +158,7 @@ export type CallResult = "no_answer" | "info_requested" | "whatsapp_requested" |
 export async function ensureCallStarted(context: QueueContext) {
   const db = getDb();
   const since = new Date(Date.now() - 4 * 60 * 60_000);
-  const [latestStarted, latestResult] = await Promise.all([
+  const [startedRows, resultRows] = await Promise.all([
     db.select({ id: activities.id, createdAt: activities.createdAt })
       .from(activities)
       .where(and(
@@ -183,6 +183,8 @@ export async function ensureCallStarted(context: QueueContext) {
       .limit(1),
   ]);
 
+  const latestStarted = startedRows[0] || null;
+  const latestResult = resultRows[0] || null;
   if (latestStarted && (!latestResult || latestResult.createdAt < latestStarted.createdAt)) {
     return { created: false, startedAt: latestStarted.createdAt };
   }
