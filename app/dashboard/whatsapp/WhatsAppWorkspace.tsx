@@ -69,8 +69,8 @@ export default function WhatsAppWorkspace() {
     selectedRef.current = id; setSelected(id); setDetail(null); setBody(""); setDraftId(undefined); setComposerVersion(null); setAttachment(null); setSlots([]); setBookingSlot(null); setConsentNote(""); sendKey.current = "";
   }, []);
 
-  const refresh = useCallback(async () => {
-    if (refreshBusyRef.current) return dataRef.current;
+  const refresh = useCallback(async (): Promise<Data> => {
+    if (refreshBusyRef.current && dataRef.current) return dataRef.current;
     refreshBusyRef.current = true;
     try {
       const result = await request<Data>("/api/whatsapp");
