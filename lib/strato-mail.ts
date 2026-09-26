@@ -160,10 +160,12 @@ class BufferedTls {
     });
   }
 
-  protected async waitForData(ms = 15_000) {
-    if (this.buffer.length || this.closed) return;
+  protected async waitForData(ms = 15_000, previousLength = 0) {
+    if (this.closed && !this.buffer.length) throw new Error("Die Verbindung zum Mailserver wurde unerwartet beendet.");
+    if (this.buffer.length > previousLength) return;
     await new Promise<void>((resolve, reject) => {
       const done = () => {
+        if (this.buffer.length <= previousLength && !this.closed) return;
         clearTimeout(timer);
         this.waiters.delete(done);
         resolve();
@@ -185,7 +187,7 @@ class BufferedTls {
         this.buffer = this.buffer.subarray(index + 2);
         return line;
       }
-      await this.waitForData();
+      await this.waitForData(15_000, this.buffer.length);
     }
   }
 }
@@ -227,7 +229,7 @@ class ImapClient extends BufferedTls {
           return { status: match[1].toUpperCase() as ImapResult["status"], response, line };
         }
       }
-      await this.waitForData(20_000);
+      await this.waitForData(20_000, this.buffer.length);
     }
   }
 
