@@ -519,9 +519,8 @@ export default function LeadCrmPanel({
               <textarea value={emailDraft.body} onChange={(event) => setEmailDraft({ ...emailDraft, body: event.target.value })} rows={8} />
               <div className={styles.emailActions}>
                 <button onClick={() => void copyEmail()}>Kopieren</button>
-                <button onClick={() => { void copyEmail(); window.open("https://webmail.strato.de/", "_blank", "noopener,noreferrer"); }}>STRATO öffnen ↗</button>
-                <button disabled={busyAction === "mark_sent"} onClick={() => void sendPreparedEmail("mark_sent")}>Als gesendet markieren</button>
-                <button className={styles.darkButton} disabled={busyAction === "send"} onClick={() => void sendPreparedEmail("send")}>{busyAction === "send" ? "Sendet …" : "Direkt senden"}</button>
+                <button type="button" onClick={() => window.location.assign("/admin/dashboard/email")}>Postfach öffnen ↗</button>
+                <button className={styles.darkButton} disabled={busyAction === "send"} onClick={() => void sendPreparedEmail("send")}>{busyAction === "send" ? "Sendet …" : "E-Mail senden"}</button>
               </div>
             </div>
           )}
