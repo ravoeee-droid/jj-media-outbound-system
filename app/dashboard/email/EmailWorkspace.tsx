@@ -71,7 +71,7 @@ export default function EmailWorkspace() {
       setConnected(Boolean(payload.connected));
       setThreads(payload.threads || []);
       setProfile(payload.profile || null);
-      if (payload.profile?.emailAddress && !setupEmail) setSetupEmail(payload.profile.emailAddress);
+      if (payload.profile?.emailAddress) setSetupEmail((current) => current || payload.profile?.emailAddress || "");
       setSelectedIds([]);
     } catch (err) { setError(err instanceof Error ? err.message : "STRATO Postfach konnte nicht geladen werden."); }
     finally { if (!quiet) setLoading(false); }
