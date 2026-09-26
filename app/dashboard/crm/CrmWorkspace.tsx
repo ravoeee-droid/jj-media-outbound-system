@@ -111,6 +111,7 @@ export default function CrmWorkspace() {
   const [query, setQuery] = useState("");
   const [viewMode, setViewMode] = useState<"table" | "kanban">("table");
   const [fontScale, setFontScale] = useState(1.15);
+  const [focusView, setFocusView] = useState<"all" | "today" | "hot" | "overdue" | "no_next">("all");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [data, setData] = useState<CrmPayload | null>(null);
   const [leads, setLeads] = useState<CrmLead[]>([]);
@@ -143,6 +144,17 @@ export default function CrmWorkspace() {
   useEffect(() => {
     window.localStorage.setItem("crm-font-scale", String(fontScale));
   }, [fontScale]);
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem("crm-focus-view");
+    if (saved && ["all", "today", "hot", "overdue", "no_next"].includes(saved)) {
+      setFocusView(saved as "all" | "today" | "hot" | "overdue" | "no_next");
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem("crm-focus-view", focusView);
+  }, [focusView]);
 
   const fetchLeads = useCallback(async ({
     scope,
@@ -234,8 +246,34 @@ export default function CrmWorkspace() {
     return items;
   }, [data]);
 
+  const visibleLeads = useMemo(() => {
+    const now = Date.now();
+    const start = new Date(); start.setHours(0, 0, 0, 0);
+    const end = new Date(); end.setHours(23, 59, 59, 999);
+    return leads.filter((lead) => {
+      const due = lead.nextActionAt ? Date.parse(lead.nextActionAt) : Number.NaN;
+      if (focusView === "today") return Number.isFinite(due) && due >= start.getTime() && due <= end.getTime() && !lead.contactLocked;
+      if (focusView === "hot") return lead.salesPriority >= 75 && !["won", "lost"].includes(lead.pipelineStage) && !lead.contactLocked;
+      if (focusView === "overdue") return Number.isFinite(due) && due < now && !["won", "lost"].includes(lead.pipelineStage) && !lead.contactLocked;
+      if (focusView === "no_next") return (!lead.nextActionAt || lead.nextAction === "none") && !["won", "lost"].includes(lead.pipelineStage) && !lead.contactLocked;
+      return true;
+    });
+  }, [leads, focusView]);
+
+  const performanceStats = useMemo(() => {
+    const now = Date.now();
+    const start = new Date(); start.setHours(0, 0, 0, 0);
+    const end = new Date(); end.setHours(23, 59, 59, 999);
+    return {
+      hot: leads.filter((lead) => lead.salesPriority >= 75 && !["won", "lost"].includes(lead.pipelineStage) && !lead.contactLocked).length,
+      overdue: leads.filter((lead) => lead.nextActionAt && Date.parse(lead.nextActionAt) < now && !["won", "lost"].includes(lead.pipelineStage) && !lead.contactLocked).length,
+      today: leads.filter((lead) => lead.nextActionAt && Date.parse(lead.nextActionAt) >= start.getTime() && Date.parse(lead.nextActionAt) <= end.getTime() && !lead.contactLocked).length,
+      noNext: leads.filter((lead) => (!lead.nextActionAt || lead.nextAction === "none") && !["won", "lost"].includes(lead.pipelineStage) && !lead.contactLocked).length,
+    };
+  }, [leads]);
+
   const selectedList = useMemo(() => [...selectedIds], [selectedIds]);
-  const selectableVisibleIds = useMemo(() => leads.map((lead) => lead.id).slice(0, 30), [leads]);
+  const selectableVisibleIds = useMemo(() => visibleLeads.map((lead) => lead.id).slice(0, 30), [visibleLeads]);
   const allVisibleSelected = selectableVisibleIds.length > 0 && selectableVisibleIds.every((id) => selectedIds.has(id));
 
   async function changeOwner(lead: CrmLead, ownerId: string) {
@@ -493,6 +531,44 @@ export default function CrmWorkspace() {
         <div className={styles.performance}><i /> Leichtgewichtige CRM-Ansicht</div>
       </section>
 
+      <section aria-label="CRM Fokus und Performance" style={{display:"grid",gridTemplateColumns:"repeat(4,minmax(0,1fr))",gap:10,marginBottom:12}}>
+        {[
+          ["today","Heute fällig",performanceStats.today,"Was heute wirklich erledigt werden muss"],
+          ["hot","Hot Leads",performanceStats.hot,"Priorität 75+ und noch offen"],
+          ["overdue","Überfällig",performanceStats.overdue,"Nächster Schritt liegt in der Vergangenheit"],
+          ["no_next","Ohne nächsten Schritt",performanceStats.noNext,"Aktive Leads ohne klare Wiedervorlage"],
+        ].map(([key,label,count,note]) => (
+          <button
+            key={String(key)}
+            type="button"
+            onClick={() => setFocusView((current) => current === key ? "all" : key as typeof focusView)}
+            aria-pressed={focusView === key}
+            style={{
+              minHeight:92,
+              textAlign:"left",
+              border: focusView === key ? "2px solid #171419" : "1px solid rgba(17,16,20,.09)",
+              borderRadius:16,
+              background: focusView === key ? "#171419" : "#fffdfb",
+              color: focusView === key ? "#fff" : "#2d282c",
+              padding:"14px 16px",
+              cursor:"pointer",
+              boxShadow:"0 10px 30px rgba(17,16,20,.04)"
+            }}
+          >
+            <span style={{display:"block",fontSize:"calc(11px * var(--crm-font-scale))",fontWeight:800,opacity:.72}}>{String(label)}</span>
+            <strong style={{display:"block",fontSize:"calc(24px * var(--crm-font-scale))",lineHeight:1.05,marginTop:5}}>{String(count)}</strong>
+            <small style={{display:"block",fontSize:"calc(9px * var(--crm-font-scale))",marginTop:5,opacity:.62,lineHeight:1.3}}>{String(note)}</small>
+          </button>
+        ))}
+      </section>
+
+      {focusView !== "all" && (
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,margin:"0 0 12px",padding:"10px 12px",borderRadius:12,background:"#f1ece8"}}>
+          <strong style={{fontSize:"calc(11px * var(--crm-font-scale))"}}>{visibleLeads.length} Leads in dieser Fokusansicht</strong>
+          <button type="button" onClick={() => setFocusView("all")} style={{minHeight:40,border:0,borderRadius:9,padding:"0 13px",background:"#171419",color:"#fff",fontWeight:800,cursor:"pointer"}}>Alle anzeigen</button>
+        </div>
+      )}
+
       {data?.permissions.canManageLeads && selectedIds.size > 0 && (
         <section className={styles.bulkBar}>
           <div className={styles.bulkCount}>
@@ -562,7 +638,7 @@ export default function CrmWorkspace() {
         <section className={styles.kanbanBoard}>
           <div className={styles.kanbanScroller}>
             {kanbanStages.map((stage) => {
-              const items = leads.filter((lead) => lead.pipelineStage === stage);
+              const items = visibleLeads.filter((lead) => lead.pipelineStage === stage);
               return (
                 <section
                   className={styles.kanbanColumn}
@@ -571,7 +647,7 @@ export default function CrmWorkspace() {
                   onDragOver={(event) => { if (data?.permissions.canManageLeads) event.preventDefault(); }}
                   onDrop={(event) => {
                     const leadId = event.dataTransfer.getData("text/lead-id");
-                    const lead = leads.find((item) => item.id === leadId);
+                    const lead = visibleLeads.find((item) => item.id === leadId);
                     if (lead) void moveLeadStage(lead, stage);
                   }}
                 >
@@ -648,7 +724,7 @@ export default function CrmWorkspace() {
               <tbody>
                 {loading && leads.length === 0 ? (
                   Array.from({ length: 8 }).map((_, index) => <SkeletonRow key={index} selectable={Boolean(data?.permissions.canManageLeads)} />)
-                ) : leads.length ? leads.map((lead) => (
+                ) : visibleLeads.length ? visibleLeads.map((lead) => (
                   <tr key={lead.id} className={lead.contactLocked ? styles.lockedRow : undefined}>
                     {data?.permissions.canManageLeads && (
                       <td className={styles.selectColumn}>
