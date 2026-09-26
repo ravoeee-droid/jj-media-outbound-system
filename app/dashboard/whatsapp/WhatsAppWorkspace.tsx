@@ -45,6 +45,7 @@ export default function WhatsAppWorkspace() {
   const [filter, setFilter] = useState("all");
   const refreshBusyRef = useRef(false);
   const detailBusyRef = useRef(false);
+  const dataRef = useRef<Data | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -69,10 +70,11 @@ export default function WhatsAppWorkspace() {
   }, []);
 
   const refresh = useCallback(async () => {
-    if (refreshBusyRef.current) return data;
+    if (refreshBusyRef.current) return dataRef.current;
     refreshBusyRef.current = true;
     try {
       const result = await request<Data>("/api/whatsapp");
+      dataRef.current = result;
       setData(result);
       setRefreshedAt(Date.now());
       if (!dirtyRef.current) setConfig(result.config);
@@ -80,7 +82,7 @@ export default function WhatsAppWorkspace() {
     } finally {
       refreshBusyRef.current = false;
     }
-  }, [data]);
+  }, []);
   const refreshDetail = useCallback(async (id: string) => {
     if (detailBusyRef.current) return null;
     detailBusyRef.current = true;
@@ -264,14 +266,32 @@ export default function WhatsAppWorkspace() {
           <label className={styles.search}><span className={styles.srOnly}>Unterhaltung suchen</span><input placeholder="Unternehmen oder Kontakt suchen" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
           <select aria-label="Unterhaltungen filtern" value={filter} onChange={(event) => setFilter(event.target.value)}><option value="all">Alle Unterhaltungen</option><option value="unread">Ungelesen</option><option value="handoff">Übernahme nötig</option><option value="booked">Termin gebucht</option><option value="closed">Gestoppt</option></select>
           <div className={styles.threadRows}>{filtered.map(({ thread, lead }) => <button key={thread.id} className={selected === thread.id ? styles.threadSelected : styles.threadButton} onClick={() => { chooseThread(thread.id); }}>
-            <span className={styles.avatar}>{lead.company.slice(0, 2).toUpperCase()}</span><span className={styles.threadCopy}><strong>{lead.company}</strong><span>{thread.summary || lead.contact || `+${thread.phone}`}</span><small>{dateLabel(thread.lastMessageAt)}</small></span>{thread.unread && <span className={styles.unread} aria-label="Ungelesen" />}
+            <span className={styles.avatar}>{lead.company.slice(0, 2).toUpperCase()}</span>
+            <span className={styles.threadCopy}>
+              <span className={styles.threadTitle}><strong>{lead.company}</strong>{thread.status === "handoff" && <b>Übernahme</b>}{thread.status === "booked" && <b>Termin</b>}</span>
+              <span>{thread.summary || lead.contact || `+${thread.phone}`}</span>
+              <small>{dateLabel(thread.lastMessageAt)}{lead.salesPriority ? ` · Prio ${lead.salesPriority}` : ""}</small>
+            </span>
+            {thread.unread && <span className={styles.unread} aria-label="Ungelesen" />}
           </button>)}{filtered.length === 0 && <p className={styles.listEmpty}>Noch keine passende Unterhaltung. Öffne einen Kontakt aus eurem CRM.</p>}</div>
         </aside>
         {!selected && <div className={styles.empty}><span className={styles.emptyIcon}>↗</span><h2>Aus Kontakten werden Gespräche.</h2><p>Öffne einen Lead, dokumentiere die WhatsApp-Zustimmung und bereite die erste Nachricht vor.</p><button className={styles.secondary} onClick={() => setShowNew(true)}>Kontakt auswählen</button></div>}
         {selected && !detail && <div className={styles.empty} role="status">Verlauf wird geladen …</div>}
         {detail && <>
           <section className={styles.chat} aria-label={`Chat mit ${detail.lead.company}`}>
-            <header className={styles.chatHeader}><button className={styles.mobileBack} onClick={() => { chooseThread(null); }}>← Zurück</button><div><h3>{detail.lead.company}</h3><span>{detail.lead.contact || `+${detail.thread.phone}`}</span></div><span className={styles.badge}>{statusLabels[detail.thread.status]}</span><button className={styles.textButton} disabled={Boolean(busy)} onClick={() => void action({ action: "update", threadId: selected, patch: { unread: false } })}>Als gelesen</button></header>
+            <header className={styles.chatHeader}>
+              <button className={styles.mobileBack} onClick={() => { chooseThread(null); }}>← Zurück</button>
+              <div className={styles.chatIdentity}>
+                <span className={styles.chatAvatar}>{detail.lead.company.slice(0, 2).toUpperCase()}</span>
+                <div><h3>{detail.lead.company}</h3><span>{detail.lead.contact || `+${detail.thread.phone}`}</span></div>
+              </div>
+              <div className={styles.chatSignals}>
+                <span className={styles.badge}>{statusLabels[detail.thread.status]}</span>
+                {detail.lead.pipelineStage && <span className={styles.signalPill}>{detail.lead.pipelineStage.replaceAll("_", " ")}</span>}
+                {detail.lead.salesPriority ? <span className={styles.signalPill}>Prio {detail.lead.salesPriority}</span> : null}
+              </div>
+              <button className={styles.textButton} disabled={Boolean(busy)} onClick={() => void action({ action: "update", threadId: selected, patch: { unread: false } })}>Gelesen</button>
+            </header>
             {detail.thread.status === "handoff" && <div className={styles.handoff}><strong>Das Team ist gefragt</strong><p>{detail.thread.handoffReason}</p></div>}
             <div className={styles.history} aria-live="polite">
               {detail.messages.filter((message) => !["draft", "used"].includes(message.status)).map((message) => <article key={message.id} className={`${styles.bubble} ${message.direction === "outbound" ? styles.outgoing : styles.incoming}`}>
@@ -294,10 +314,54 @@ export default function WhatsAppWorkspace() {
             </form>
           </section>
           <aside className={styles.inspector}>
-            <section><h3>Steuerung</h3><label>Modus<select value={detail.thread.mode} disabled={Boolean(busy)} onChange={(event) => void action({ action: "update", threadId: selected, patch: { mode: event.target.value, status: "open" } })}>{Object.entries(modeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><p className={styles.hint}>{!config.enabled ? "Die KI ist global pausiert." : detail.thread.mode === "copilot" ? "Die KI entwirft. Ihr sendet." : detail.thread.mode === "autopilot" ? "Die KI antwortet innerhalb eurer Regeln." : "Das Team führt dieses Gespräch."}</p><button className={styles.secondary} disabled={Boolean(busy)} onClick={() => void action({ action: "handoff", threadId: selected })}>Chat übernehmen</button></section>
-            <section><h3>WhatsApp-Zustimmung</h3><span className={`${styles.badge} ${detail.thread.consent === "granted" ? styles.good : ""}`}>{detail.thread.consent === "granted" ? "Dokumentiert" : detail.thread.consent === "revoked" ? "Widerrufen" : "Noch offen"}</span>{detail.thread.consentAt && <small>{dateLabel(detail.thread.consentAt)}</small>}{detail.thread.consentNote && <p className={styles.hint}>{detail.thread.consentNote}</p>}<label>Nachweis<textarea rows={3} value={consentNote} onChange={(event) => setConsentNote(event.target.value)} placeholder="Z. B. heute im Telefonat: Kontakt möchte Informationen und Rückfragen per WhatsApp erhalten." /></label><button className={styles.secondary} disabled={Boolean(busy) || consentNote.trim().length < 10} onClick={() => void action({ action: "update", threadId: selected, patch: { consent: "granted", consentNote } }).then((r) => { if (r) setConsentNote(""); })}>Zustimmung speichern</button><button className={styles.dangerButton} disabled={Boolean(busy) || detail.thread.consent === "revoked"} onClick={() => void action({ action: "update", threadId: selected, patch: { consent: "revoked", consentNote: "Vom Team gestoppt" } })}>Kontakt stoppen</button></section>
-            <section><h3>Nächster Schritt</h3><button className={styles.secondary} disabled={Boolean(busy) || detail.thread.consent !== "granted"} onClick={() => void action({ action: "queue", threadId: selected, enabled: threadQueue?.status !== "queued" })}>{threadQueue?.status === "queued" ? "Aus Tageslauf nehmen" : "Für Tageslauf freigeben"}</button>{threadQueue && <small>{queueLabels[threadQueue.status]} {threadQueue.error}</small>}{detail.lead.videoStatus === "ready" && detail.lead.slug && <button className={styles.textButton} onClick={() => editBody(`Hallo ${detail.lead.contact || ""}, wie besprochen finden Sie hier die vorbereitete Analyse für ${detail.lead.company}:\n\n${window.location.origin}/v/${detail.lead.slug}\n\nWas interessiert Sie daran besonders?`)}>Fertige Analyse einfügen</button>}<Link className={styles.textLink} href="/dashboard/outbound#leads">CRM öffnen ↗</Link></section>
-            <section><h3>Termin finden</h3><small>{config.durationMinutes} Minuten · {config.timezone}</small><button className={styles.secondary} disabled={Boolean(busy) || !data.calendar || !config.allowBooking} onClick={() => { const id = selected; void action({ action: "slots", threadId: id }).then((r) => { if (r?.slots && selectedRef.current === id) setSlots(r.slots); }); }}>Freie Zeiten laden</button>{(!data.calendar || !config.allowBooking) && <p className={styles.hint}>Kalender verbinden und Terminierung in den Regeln aktivieren.</p>}{slots.map((slot) => <button className={styles.slot} key={slot.id} disabled={Boolean(busy)} onClick={() => setBookingSlot(slot)}>{slot.label}</button>)}{bookingSlot && <div className={styles.bookingConfirm}><strong>{bookingSlot.label}</strong><p>Hat der Kontakt dieser Zeit zugestimmt?</p><button className={styles.primary} disabled={Boolean(busy)} onClick={() => { const id = selected; void action({ action: "book", threadId: id, slotId: bookingSlot.id, expectedVersion: detail.thread.version }).then((r) => { if (r?.confirmation && selectedRef.current === id) { editBody(r.confirmation); setBookingSlot(null); setSlots([]); setNotice("Termin im Google Kalender gebucht. Die Bestätigung ist zum Versand vorbereitet."); } }); }}>Bestätigten Termin buchen</button><button className={styles.textButton} onClick={() => setBookingSlot(null)}>Zurück</button></div>}{detail.reservations.filter((r) => r.status === "confirmed").map((r) => <p className={styles.confirmedBooking} key={r.id}>✓ {dateLabel(r.startAt)}{r.joinUrl && <a href={r.joinUrl} target="_blank" rel="noreferrer">Gespräch öffnen ↗</a>}</p>)}{detail.thread.nextFollowUpAt && <p className={styles.hint}>Wiedervorlage: {dateLabel(detail.thread.nextFollowUpAt)}</p>}</section>
+            <section className={styles.salesCard}>
+              <div className={styles.salesHead}><div><small>SALES COCKPIT</small><h3>{detail.lead.company}</h3></div><b>{detail.lead.salesPriority ?? 0}</b></div>
+              <div className={styles.salesFacts}>
+                <span><small>Phase</small><strong>{detail.lead.pipelineStage?.replaceAll("_", " ") || "offen"}</strong></span>
+                <span><small>Intent</small><strong>{detail.thread.intent || "noch offen"}</strong></span>
+              </div>
+              {detail.thread.summary && <p className={styles.salesSummary}>{detail.thread.summary}</p>}
+              <div className={styles.quickLinks}>
+                <Link href="/dashboard/outbound#leads">CRM öffnen ↗</Link>
+                {detail.lead.phone && <a href={`tel:+${detail.thread.phone}`}>Anrufen ☎</a>}
+                {detail.lead.websiteUrl && <a href={detail.lead.websiteUrl} target="_blank" rel="noreferrer">Website ↗</a>}
+              </div>
+            </section>
+
+            <section>
+              <div className={styles.inspectorTitle}><div><small>NÄCHSTER SCHRITT</small><h3>Was bringt den Lead weiter?</h3></div></div>
+              <button className={styles.primary} disabled={Boolean(busy) || detail.thread.consent !== "granted"} onClick={() => void action({ action: "queue", threadId: selected, enabled: threadQueue?.status !== "queued" })}>{threadQueue?.status === "queued" ? "Aus Tageslauf nehmen" : "Für Tageslauf freigeben"}</button>
+              {threadQueue && <small>{queueLabels[threadQueue.status]} {threadQueue.error}</small>}
+              {detail.lead.videoStatus === "ready" && detail.lead.slug && <button className={styles.secondary} onClick={() => editBody(`Hallo ${detail.lead.contact || ""}, wie besprochen finden Sie hier die vorbereitete Analyse für ${detail.lead.company}:\n\n${window.location.origin}/v/${detail.lead.slug}\n\nWas interessiert Sie daran besonders?`)}>Analyse einfügen</button>}
+            </section>
+
+            <section>
+              <div className={styles.inspectorTitle}><div><small>TERMIN</small><h3>Direkt zum Gespräch</h3></div><span>{config.durationMinutes} Min.</span></div>
+              <button className={styles.primary} disabled={Boolean(busy) || !data.calendar || !config.allowBooking} onClick={() => { const id = selected; void action({ action: "slots", threadId: id }).then((r) => { if (r?.slots && selectedRef.current === id) setSlots(r.slots); }); }}>Freie Zeiten laden</button>
+              {(!data.calendar || !config.allowBooking) && <p className={styles.hint}>Kalender verbinden und Terminierung aktivieren.</p>}
+              <div className={styles.slotGrid}>{slots.slice(0, 4).map((slot) => <button className={styles.slot} key={slot.id} disabled={Boolean(busy)} onClick={() => setBookingSlot(slot)}>{slot.label}</button>)}</div>
+              {bookingSlot && <div className={styles.bookingConfirm}><strong>{bookingSlot.label}</strong><p>Hat der Kontakt dieser Zeit zugestimmt?</p><button className={styles.primary} disabled={Boolean(busy)} onClick={() => { const id = selected; void action({ action: "book", threadId: id, slotId: bookingSlot.id, expectedVersion: detail.thread.version }).then((r) => { if (r?.confirmation && selectedRef.current === id) { editBody(r.confirmation); setBookingSlot(null); setSlots([]); setNotice("Termin gebucht. Bestätigung ist zum Versand vorbereitet."); } }); }}>Termin buchen</button><button className={styles.textButton} onClick={() => setBookingSlot(null)}>Zurück</button></div>}
+              {detail.reservations.filter((r) => r.status === "confirmed").map((r) => <p className={styles.confirmedBooking} key={r.id}>✓ {dateLabel(r.startAt)}{r.joinUrl && <a href={r.joinUrl} target="_blank" rel="noreferrer">Meet öffnen ↗</a>}</p>)}
+              {detail.thread.nextFollowUpAt && <p className={styles.hint}>Wiedervorlage: {dateLabel(detail.thread.nextFollowUpAt)}</p>}
+            </section>
+
+            <details className={styles.controlDetails}>
+              <summary>Automatik & Sicherheit</summary>
+              <section>
+                <label>Modus<select value={detail.thread.mode} disabled={Boolean(busy)} onChange={(event) => void action({ action: "update", threadId: selected, patch: { mode: event.target.value, status: "open" } })}>{Object.entries(modeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+                <p className={styles.hint}>{!config.enabled ? "KI global pausiert." : detail.thread.mode === "copilot" ? "KI entwirft, Team sendet." : detail.thread.mode === "autopilot" ? "KI antwortet innerhalb der Regeln." : "Team führt den Chat."}</p>
+                <button className={styles.secondary} disabled={Boolean(busy)} onClick={() => void action({ action: "handoff", threadId: selected })}>Chat übernehmen</button>
+              </section>
+              <section>
+                <h3>WhatsApp-Zustimmung</h3>
+                <span className={`${styles.badge} ${detail.thread.consent === "granted" ? styles.good : ""}`}>{detail.thread.consent === "granted" ? "Dokumentiert" : detail.thread.consent === "revoked" ? "Widerrufen" : "Noch offen"}</span>
+                {detail.thread.consentAt && <small>{dateLabel(detail.thread.consentAt)}</small>}
+                {detail.thread.consentNote && <p className={styles.hint}>{detail.thread.consentNote}</p>}
+                <label>Nachweis<textarea rows={3} value={consentNote} onChange={(event) => setConsentNote(event.target.value)} placeholder="Wann, wie und wofür wurde zugestimmt?" /></label>
+                <button className={styles.secondary} disabled={Boolean(busy) || consentNote.trim().length < 10} onClick={() => void action({ action: "update", threadId: selected, patch: { consent: "granted", consentNote } }).then((r) => { if (r) setConsentNote(""); })}>Zustimmung speichern</button>
+                <button className={styles.dangerButton} disabled={Boolean(busy) || detail.thread.consent === "revoked"} onClick={() => void action({ action: "update", threadId: selected, patch: { consent: "revoked", consentNote: "Vom Team gestoppt" } })}>Kontakt stoppen</button>
+              </section>
+            </details>
           </aside>
         </>}
       </div>
