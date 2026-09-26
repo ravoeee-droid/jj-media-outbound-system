@@ -54,25 +54,32 @@ function decrypt(value: string) {
 }
 
 export async function getStoredStratoCredentials(workspaceId: string, email?: string): Promise<StoredStratoCredentials | null> {
-  const key = email ? accountKey(email) : KEY;
-  const [row] = await getDb()
-    .select({ value: settings.value })
-    .from(settings)
-    .where(and(eq(settings.workspaceId, workspaceId), eq(settings.key, key)))
-    .limit(1);
+  const normalizedEmail = email?.trim().toLowerCase() || "";
+  const keys = normalizedEmail ? [accountKey(normalizedEmail), KEY] : [KEY];
 
-  if (!row?.value) return null;
-  try {
-    const parsed = JSON.parse(row.value) as { email?: unknown; password?: unknown; senderName?: unknown };
-    if (typeof parsed.email !== "string" || typeof parsed.password !== "string") return null;
-    return {
-      email: parsed.email.trim(),
-      password: decrypt(parsed.password),
-      senderName: typeof parsed.senderName === "string" && parsed.senderName.trim() ? parsed.senderName.trim() : "JJ-Media",
-    };
-  } catch {
-    return null;
+  for (const key of keys) {
+    const [row] = await getDb()
+      .select({ value: settings.value })
+      .from(settings)
+      .where(and(eq(settings.workspaceId, workspaceId), eq(settings.key, key)))
+      .limit(1);
+
+    if (!row?.value) continue;
+    try {
+      const parsed = JSON.parse(row.value) as { email?: unknown; password?: unknown; senderName?: unknown };
+      if (typeof parsed.email !== "string" || typeof parsed.password !== "string") continue;
+      const parsedEmail = parsed.email.trim().toLowerCase();
+      if (normalizedEmail && parsedEmail !== normalizedEmail) continue;
+      return {
+        email: parsedEmail,
+        password: decrypt(parsed.password),
+        senderName: typeof parsed.senderName === "string" && parsed.senderName.trim() ? parsed.senderName.trim() : "JJ-Media",
+      };
+    } catch {
+      continue;
+    }
   }
+  return null;
 }
 
 export async function saveStoredStratoCredentials(
@@ -116,9 +123,14 @@ export async function ensureBootstrapStratoAccounts(workspaceId: string) {
   for (const account of BOOTSTRAP_ACCOUNTS) {
     const normalizedEmail = account.email.trim().toLowerCase();
     if (primary.email.trim().toLowerCase() === normalizedEmail) {
-      // If the primary mailbox is already this address, remove any stale scoped copy
-      // so the switcher never shows the same mailbox twice.
-      await deleteStoredStratoCredentials(workspaceId, normalizedEmail);
+      // The primary mailbox already represents this address. Remove a stale scoped
+      // duplicate only when one actually exists, avoiding a delete query on every read.
+      const [duplicate] = await getDb()
+        .select({ key: settings.key })
+        .from(settings)
+        .where(and(eq(settings.workspaceId, workspaceId), eq(settings.key, accountKey(normalizedEmail))))
+        .limit(1);
+      if (duplicate) await deleteStoredStratoCredentials(workspaceId, normalizedEmail);
       continue;
     }
     const existing = await getStoredStratoCredentials(workspaceId, normalizedEmail);
