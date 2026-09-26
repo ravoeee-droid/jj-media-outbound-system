@@ -123,7 +123,11 @@ export async function reviewQueueItem(workspaceId: string, queueId: string, deci
 }
 
 function canContact(thread: typeof whatsappThreads.$inferSelect, lead: typeof leads.$inferSelect) {
-  if (thread.consent !== "granted") throw new Error("Für diesen Kontakt fehlt die WhatsApp-Zustimmung.");
+  if (thread.consent !== "granted") throw new Error("Für automatische Nachrichten fehlt die Freigabe.");
+  if (thread.status === "closed" || isSuppressed(lead.tags) || lead.pipelineStage === "lost") throw new Error("Dieser Kontakt ist für Nachrichten gestoppt.");
+}
+
+function canManualContact(thread: typeof whatsappThreads.$inferSelect, lead: typeof leads.$inferSelect) {
   if (thread.status === "closed" || isSuppressed(lead.tags) || lead.pipelineStage === "lost") throw new Error("Dieser Kontakt ist für Nachrichten gestoppt.");
 }
 
@@ -131,7 +135,8 @@ async function deliver(args: { workspaceId: string; threadId: string; messageId:
   requireSecureAccess();
   const db = getDb();
   const { thread, lead } = await threadRecord(args.workspaceId, args.threadId);
-  canContact(thread, lead);
+  if (args.actor === "human") canManualContact(thread, lead);
+  else canContact(thread, lead);
   if (thread.version !== args.expectedVersion) throw new Error("Die Unterhaltung wurde inzwischen aktualisiert. Bitte den neuen Verlauf prüfen.");
   if (args.actor !== "human") {
     const config = await getAgentConfig(args.workspaceId);
@@ -145,7 +150,8 @@ async function deliver(args: { workspaceId: string; threadId: string; messageId:
   if (message.status !== "draft") throw new Error("Der Versandstatus ist noch unklar. Bitte zuerst in WhatsApp prüfen; die Nachricht wird nicht erneut verschickt.");
   // Recheck the stop switch after potentially slow attachment loading.
   const fresh = await threadRecord(args.workspaceId, args.threadId);
-  canContact(fresh.thread, fresh.lead);
+  if (args.actor === "human") canManualContact(fresh.thread, fresh.lead);
+  else canContact(fresh.thread, fresh.lead);
   if (fresh.thread.version !== args.expectedVersion) throw new Error("Der Kontakt wurde zwischenzeitlich aktualisiert. Versand angehalten.");
   if (args.actor !== "human") {
     const latest = await getAgentConfig(args.workspaceId);
@@ -168,7 +174,7 @@ export async function sendManual(args: { workspaceId: string; threadId: string; 
       return deliver({ ...args, messageId: existing[0].id, actor: "human" });
     }
     const { thread, lead } = await threadRecord(args.workspaceId, args.threadId);
-    canContact(thread, lead);
+    canManualContact(thread, lead);
     if (thread.version !== args.expectedVersion) throw new Error("Es gibt neue Nachrichten. Bitte zuerst den Verlauf prüfen.");
     let slots: CalendarSlot[] | undefined;
     if (args.draftId) {
