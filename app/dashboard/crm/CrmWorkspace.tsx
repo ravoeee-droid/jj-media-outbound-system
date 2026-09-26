@@ -23,6 +23,7 @@ type CrmLead = {
   nextAction: string;
   nextActionAt: string | null;
   contactLocked: boolean;
+  privateContact: boolean;
   videoStatus: string;
   watchPercent: number;
   salesPriority: number;
@@ -39,7 +40,7 @@ type CrmPayload = {
   query: string;
   currentUser: { id: string; name: string | null; email: string | null; role: string };
   permissions: { canViewAll: boolean; canManageLeads: boolean; canGenerateVideo: boolean };
-  tabs: { total: number; unassigned: number; members: MemberTab[] };
+  tabs: { total: number; unassigned: number; private: number; members: MemberTab[] };
   error?: string;
 };
 
@@ -241,6 +242,7 @@ export default function CrmWorkspace() {
         items.push({ key: member.userId, label: member.name, count: member.count });
       }
       items.push({ key: "unassigned", label: "Unzugeordnet", count: data.tabs.unassigned });
+      items.push({ key: "private", label: "Privat", count: data.tabs.private });
       items.push({ key: "all", label: "Alle Leads", count: data.tabs.total });
     }
     return items;
@@ -304,6 +306,12 @@ export default function CrmWorkspace() {
       email: String(updated.email ?? lead.email),
       phone: String(updated.phone ?? lead.phone),
       ownerId: updated.ownerId === null ? null : String(updated.ownerId ?? lead.ownerId ?? "") || null,
+      privateContact: typeof updated.privateContact === "boolean"
+        ? updated.privateContact
+        : Array.isArray(updated.tags)
+          ? updated.tags.includes("private-contact")
+          : lead.privateContact,
+      contactLocked: Boolean(updated.contactLocked ?? lead.contactLocked),
       updatedAt: String(updated.updatedAt ?? lead.updatedAt),
     } : lead));
     cacheRef.current.clear();
@@ -469,6 +477,25 @@ export default function CrmWorkspace() {
     "lost",
   ] as const;
 
+  async function setBusinessContact(lead: CrmLead) {
+    if (!data?.permissions.canManageLeads) return;
+    try {
+      const response = await fetch("/api/crm", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: lead.id, privateContact: false }),
+      });
+      const payload = await response.json() as { lead?: Record<string, unknown>; error?: string };
+      if (!response.ok || !payload.lead) throw new Error(payload.error || "Kontakt konnte nicht verschoben werden.");
+      cacheRef.current.clear();
+      setLeads((current) => current.filter((item) => item.id !== lead.id));
+      setNotice(`${lead.company} wurde wieder als geschäftlicher Kontakt freigegeben.`);
+      await fetchLeads({ scope: activeScope, search: debouncedQuery, silent: true });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Kontakt konnte nicht verschoben werden.");
+    }
+  }
+
   async function moveLeadStage(lead: CrmLead, pipelineStage: string) {
     if (!data?.permissions.canManageLeads || lead.pipelineStage === pipelineStage) return;
     const previous = lead.pipelineStage;
@@ -531,7 +558,15 @@ export default function CrmWorkspace() {
         <div className={styles.performance}><i /> Leichtgewichtige CRM-Ansicht</div>
       </section>
 
-      <section aria-label="CRM Fokus und Performance" style={{display:"grid",gridTemplateColumns:"repeat(4,minmax(0,1fr))",gap:10,marginBottom:12}}>
+      {activeScope === "private" ? (
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,margin:"0 0 12px",padding:"14px 16px",borderRadius:14,background:"#fffdfb",border:"1px solid rgba(17,16,20,.09)"}}>
+          <div>
+            <strong style={{display:"block",fontSize:"calc(13px * var(--crm-font-scale))"}}>Private Kontakte</strong>
+            <small style={{display:"block",marginTop:4,opacity:.66}}>Diese Kontakte sind aus Sales-CRM, Kanban, Tages-Queue, Follow-ups, Outbound und KI-Akquise ausgeschlossen.</small>
+          </div>
+          <span style={{fontWeight:900,fontSize:"calc(20px * var(--crm-font-scale))"}}>{data?.tabs.private ?? 0}</span>
+        </div>
+      ) : <section aria-label="CRM Fokus und Performance" style={{display:"grid",gridTemplateColumns:"repeat(4,minmax(0,1fr))",gap:10,marginBottom:12}}>
         {[
           ["today","Heute fällig",performanceStats.today,"Was heute wirklich erledigt werden muss"],
           ["hot","Hot Leads",performanceStats.hot,"Priorität 75+ und noch offen"],
@@ -560,9 +595,9 @@ export default function CrmWorkspace() {
             <small style={{display:"block",fontSize:"calc(9px * var(--crm-font-scale))",marginTop:5,opacity:.62,lineHeight:1.3}}>{String(note)}</small>
           </button>
         ))}
-      </section>
+      </section>}
 
-      {focusView !== "all" && (
+      {activeScope !== "private" && focusView !== "all" && (
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,margin:"0 0 12px",padding:"10px 12px",borderRadius:12,background:"#f1ece8"}}>
           <strong style={{fontSize:"calc(11px * var(--crm-font-scale))"}}>{visibleLeads.length} Leads in dieser Fokusansicht</strong>
           <button type="button" onClick={() => setFocusView("all")} style={{minHeight:40,border:0,borderRadius:9,padding:"0 13px",background:"#171419",color:"#fff",fontWeight:800,cursor:"pointer"}}>Alle anzeigen</button>
@@ -746,11 +781,18 @@ export default function CrmWorkspace() {
                     <td>
                       <div className={styles.contact}><strong>{lead.contact || "Ansprechpartner offen"}</strong><small>{lead.phone || lead.email || "Kontaktdaten offen"}</small></div>
                     </td>
-                    <td><span className={styles.stage} data-stage={lead.pipelineStage}>{stageLabel[lead.pipelineStage] || lead.pipelineStage}</span></td>
+                    <td>
+                      {activeScope === "private" ? (
+                        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                          <span className={styles.stage}>Privat</span>
+                          {data?.permissions.canManageLeads && <button type="button" onClick={() => void setBusinessContact(lead)} style={{border:"1px solid rgba(17,16,20,.12)",borderRadius:8,background:"#fff",minHeight:34,padding:"0 10px",fontWeight:800,cursor:"pointer"}}>Geschäftlich</button>}
+                        </div>
+                      ) : <span className={styles.stage} data-stage={lead.pipelineStage}>{stageLabel[lead.pipelineStage] || lead.pipelineStage}</span>}
+                    </td>
                     <td>
                       <div className={styles.nextAction}>
-                        <strong>{lead.contactLocked ? "Gesperrt" : actionLabel[lead.nextAction] || lead.nextAction}</strong>
-                        <small>{lead.contactLocked ? "Kein weiterer Kontakt" : formatDate(lead.nextActionAt)}</small>
+                        <strong>{lead.privateContact ? "Privat" : lead.contactLocked ? "Gesperrt" : actionLabel[lead.nextAction] || lead.nextAction}</strong>
+                        <small>{lead.privateContact ? "Kein Sales-Kontakt" : lead.contactLocked ? "Kein weiterer Kontakt" : formatDate(lead.nextActionAt)}</small>
                       </div>
                     </td>
                     <td>
