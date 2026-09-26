@@ -322,7 +322,7 @@ export default function LeadCrmPanel({
       });
       const result = await response.json() as { error?: string };
       if (!response.ok) throw new Error(result.error || "WhatsApp konnte nicht geöffnet werden.");
-      window.location.assign(`/dashboard/whatsapp?lead=${lead.id}`);
+      window.location.assign(`/admin/dashboard/whatsapp?lead=${lead.id}`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "WhatsApp konnte nicht geöffnet werden.");
       setBusyAction("");
