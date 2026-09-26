@@ -372,6 +372,7 @@ export default function LeadCrmPanel({
           contact: lead.contact,
           email: lead.email,
           phone: lead.phone,
+          whatsappStatus: lead.whatsappStatus,
           notes: lead.notes,
           objection: lead.objection,
           pitch: lead.pitch,
@@ -428,6 +429,7 @@ export default function LeadCrmPanel({
 
   const profileUrl = lead.instagramUrl || lead.websiteUrl;
   const canContact = !lead.contactLocked;
+  const hasWhatsapp = ["ready", "active", "sent", "replied"].includes(lead.whatsappStatus);
 
   return (
     <div className={styles.backdrop} role="presentation" onMouseDown={onClose}>
@@ -465,7 +467,7 @@ export default function LeadCrmPanel({
           <div className={styles.sectionHead}><div><small>MANUELLE AKTIONEN</small><h3>Nächster Schritt ohne Umwege</h3></div><span>{lead.nextAction === "none" ? "Kein Schritt offen" : "Als Nächstes: " + lead.nextAction}</span></div>
           <div className={styles.actionGrid}>
             <ActionButton icon="☎" title="Anrufen" note={lead.phone || "Telefon fehlt"} disabled={!lead.phone || !canContact} href={lead.phone ? `tel:${lead.phone.replace(/[^+\d]/g, "")}` : undefined} />
-            <ActionButton icon="◉" title="WhatsApp" note={lead.phone ? "Thread öffnen" : "Telefon fehlt"} disabled={!permissions.canUseWhatsapp || !lead.phone || !canContact} busy={busyAction === "whatsapp"} onClick={() => void openWhatsapp()} />
+            <ActionButton icon="◉" title="WhatsApp" note={!lead.phone ? "Telefon fehlt" : hasWhatsapp ? "Thread öffnen" : "Keine WhatsApp-Nummer bestätigt"} disabled={!permissions.canUseWhatsapp || !lead.phone || !hasWhatsapp || !canContact} busy={busyAction === "whatsapp"} onClick={() => void openWhatsapp()} />
             <ActionButton icon="⌕" title="Enrichen" note="Website & Kontakt" disabled={!permissions.canManageLeads} busy={busyAction === "enrich"} onClick={() => void runEnrichment()} />
             <ActionButton icon="✓" title="Validieren" note={statusLabel[lead.validationStatus] || lead.validationStatus} disabled={!permissions.canManageLeads} busy={busyAction === "validate"} onClick={() => void runWorkflow("validate", "Lead wurde validiert.")} />
             <ActionButton icon="◇" title="Analysieren" note="Readiness & Priorität" disabled={!permissions.canManageLeads} busy={busyAction === "analyze"} onClick={() => void runWorkflow("analyze", "Lead-Readiness wurde aktualisiert.")} />
@@ -533,6 +535,7 @@ export default function LeadCrmPanel({
             <label><span>Pipeline</span><select disabled={!permissions.canManageLeads} value={lead.pipelineStage} onChange={(event) => patch("pipelineStage", event.target.value)}>{stages.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
             <label><span>Ansprechpartner</span><input disabled={!permissions.canManageLeads} value={lead.contact} onChange={(event) => patch("contact", event.target.value)} /></label>
             <label><span>Telefon</span><input disabled={!permissions.canManageLeads} value={lead.phone} onChange={(event) => patch("phone", event.target.value)} /></label>
+            <label><span>WhatsApp verfügbar</span><select disabled={!permissions.canManageLeads || !lead.phone} value={hasWhatsapp ? "yes" : "no"} onChange={(event) => patch("whatsappStatus", event.target.value === "yes" ? "ready" : "not_started")}><option value="no">Nein / Festnetz / unbekannt</option><option value="yes">Ja, WhatsApp-Nummer bestätigt</option></select></label>
             <label><span>E-Mail</span><input disabled={!permissions.canManageLeads} type="email" value={lead.email} onChange={(event) => patch("email", event.target.value)} /></label>
             <label><span>Geschäftsführer / Inhaber</span><input value={lead.ceo || "Noch nicht ermittelt"} readOnly /></label>
             <label><span>Standort</span><input value={[lead.city, lead.region].filter(Boolean).join(", ") || "Noch nicht ermittelt"} readOnly /></label>
