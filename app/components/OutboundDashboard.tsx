@@ -412,8 +412,8 @@ export default function OutboundDashboard({ userName = "JJ-Media" }: { userName?
     window.open("https://webmail.strato.de/", "_blank", "noopener,noreferrer");
     setManualComposerOpened(true);
     showToast(copiedRich
-      ? "STRATO Mail ist offen. Füge die Rich-Mail mit Strg+V ein und sende sie."
-      : "STRATO Mail ist offen. Füge den kopierten Text ein und sende ihn.");
+      ? "E-Mail ist offen. Füge die Rich-Mail mit Strg+V ein und sende sie."
+      : "E-Mail ist offen. Füge den kopierten Text ein und sende ihn.");
   }
 
   async function confirmManualSent() {
@@ -461,7 +461,7 @@ export default function OutboundDashboard({ userName = "JJ-Media" }: { userName?
       setEmailDraft(null);
       const taskPayload = await fetch("/api/tasks").then((taskResponse) => taskResponse.json()) as { tasks?: typeof tasks };
       if (taskPayload.tasks) setTasks(taskPayload.tasks);
-      showToast(payload.alreadySent ? "Diese Mail war bereits versendet; es wurde nichts doppelt gesendet." : "Rich-Mail mit GIF wurde über STRATO Mail versendet.");
+      showToast(payload.alreadySent ? "Diese Mail war bereits versendet; es wurde nichts doppelt gesendet." : "Rich-Mail mit GIF wurde über E-Mail versendet.");
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Versand fehlgeschlagen.");
     } finally {
@@ -601,7 +601,7 @@ export default function OutboundDashboard({ userName = "JJ-Media" }: { userName?
   async function toggleAutoFollowups() {
     const next = !autoFollowups;
     if (next && !integrations.mail) {
-      showToast("Verbinde zuerst STRATO Mail, bevor automatische Follow-ups aktiviert werden.");
+      showToast("Verbinde zuerst E-Mail, bevor automatische Follow-ups aktiviert werden.");
       return;
     }
     if (next) {
@@ -755,7 +755,7 @@ export default function OutboundDashboard({ userName = "JJ-Media" }: { userName?
                           <td><span className="muted">{lead.email || "Fehlt noch"}</span></td>
                           <td><span className={statusClass(lead.status)}><i />{lead.status}</span></td>
                           <td><strong className="watchtime">{lead.watch}</strong></td>
-                          <td><div className="table-action-group"><button onClick={() => setSelectedLeadId(lead.id)}>CRM</button><Link href={`/dashboard/whatsapp?lead=${lead.id}`}>WhatsApp</Link><button onClick={() => generateLeadVideo(lead)} disabled={lead.videoStatus === "processing"}>{lead.videoStatus === "processing" ? "Erstellt …" : lead.videoStatus === "ready" ? "Video neu" : "Video erstellen"}</button><label className="table-upload-action">{uploadingProfileId === lead.id ? "Upload …" : "IG-Screenshot"}<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => void uploadProfileScreenshot(lead, event)} disabled={Boolean(uploadingProfileId)} /></label><button onClick={() => prepareEmail(lead)}>STRATO Mail</button><a href={`/v/${lead.slug}`} target="_blank" rel="noreferrer">LP öffnen</a></div></td>
+                          <td><div className="table-action-group"><button onClick={() => setSelectedLeadId(lead.id)}>CRM</button><Link href={`/dashboard/whatsapp?lead=${lead.id}`}>WhatsApp</Link><button onClick={() => generateLeadVideo(lead)} disabled={lead.videoStatus === "processing"}>{lead.videoStatus === "processing" ? "Erstellt …" : lead.videoStatus === "ready" ? "Video neu" : "Video erstellen"}</button><label className="table-upload-action">{uploadingProfileId === lead.id ? "Upload …" : "IG-Screenshot"}<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => void uploadProfileScreenshot(lead, event)} disabled={Boolean(uploadingProfileId)} /></label><button onClick={() => prepareEmail(lead)}>E-Mail</button><a href={`/v/${lead.slug}`} target="_blank" rel="noreferrer">LP öffnen</a></div></td>
                         </tr>
                       ))}
                     </tbody>
@@ -839,12 +839,12 @@ export default function OutboundDashboard({ userName = "JJ-Media" }: { userName?
                   <form className="calendar-form" onSubmit={saveCalendar}><input type="url" value={calendarUrl} onChange={(event) => setCalendarUrl(event.target.value)} placeholder="https://cal.com/jj-media/15min" /><button className="button button--primary" type="submit">Speichern</button></form>
                 </article>
                 <article className="integration-item integration-item--page">
-                  <div className="integration-item__head"><span className="integration-logo integration-logo--gmail">M</span><div><strong>STRATO Mail</strong><small>IMAP/SMTP-Verbindung für direkten Versand</small></div><span className={`integration-state ${integrations.mail ? "integration-state--ready" : ""}`}>{integrations.mail ? "Verbunden" : "Nicht verbunden"}</span></div>
-                  <p>{integrations.mail ? "E-Mails werden direkt über dein STRATO-Postfach versendet. Folgekontakte können optional automatisiert werden." : "Hinterlege STRATO_MAIL_EMAIL und STRATO_MAIL_PASSWORD einmal sicher in Vercel. Danach ist das Postfach direkt im Growth OS verfügbar."}</p>
+                  <div className="integration-item__head"><span className="integration-logo integration-logo--gmail">M</span><div><strong>E-Mail</strong><small>IMAP/SMTP-Verbindung für direkten Versand</small></div><span className={`integration-state ${integrations.mail ? "integration-state--ready" : ""}`}>{integrations.mail ? "Verbunden" : "Nicht verbunden"}</span></div>
+                  <p>{integrations.mail ? "E-Mails werden direkt über dein STRATO-Postfach versendet. Folgekontakte können optional automatisiert werden." : "Hinterlege die E-Mail-Zugangsdaten einmal sicher in Vercel. Danach ist das Postfach direkt im Growth OS verfügbar."}</p>
                   <div className="email-preview__actions">
                     {integrations.mail
                       ? <button className="button button--ghost" onClick={() => void openStratoMail()}>Postfach öffnen</button>
-                      : <a className="button button--primary" href="/dashboard/email">STRATO Mail einrichten</a>}
+                      : <a className="button button--primary" href="/dashboard/email">E-Mail einrichten</a>}
                     <button className={`button ${autoFollowups ? "button--primary" : "button--soft"}`} onClick={() => void toggleAutoFollowups()} disabled={!integrations.mail}>
                       {autoFollowups ? "✓ Auto-Follow-ups aktiv" : "Auto-Follow-ups einschalten"}
                     </button>
@@ -981,7 +981,7 @@ export default function OutboundDashboard({ userName = "JJ-Media" }: { userName?
         <div className="modal-backdrop modal-backdrop--center" role="presentation" onMouseDown={() => setEmailDraft(null)}>
           <section className="email-preview" role="dialog" aria-modal="true" aria-labelledby="email-preview-title" onMouseDown={(event) => event.stopPropagation()}>
             <button className="modal-close" onClick={() => setEmailDraft(null)} aria-label="Schließen">×</button>
-            <p className="eyebrow eyebrow--orange">STRATO Mail-Entwurf</p>
+            <p className="eyebrow eyebrow--orange">E-Mail-Entwurf</p>
             <h2 id="email-preview-title">Persönliche Nachricht an {emailDraft.lead.company}</h2>
             <div className="email-field"><small>An</small><strong>{emailDraft.lead.email}</strong></div>
             <div className="email-field"><small>Betreff</small><strong>{emailDraft.subject}</strong></div>
@@ -993,11 +993,10 @@ export default function OutboundDashboard({ userName = "JJ-Media" }: { userName?
             </a>
             <div className="email-preview__actions">
               <button className="button button--ghost" onClick={() => void copyRichEmail().then(() => showToast("Rich-Mail inklusive GIF kopiert."))}>Rich-Mail kopieren</button>
-              {integrations.mail && <button className="button button--primary" onClick={() => void sendDirect()} disabled={sendingEmail}>{sendingEmail ? "Wird gesendet …" : "Jetzt über STRATO Mail senden →"}</button>}
-              {!integrations.mail && !manualComposerOpened && <button className="button button--primary" onClick={() => void openManualStratoMail()}>Kopieren & STRATO Mail öffnen →</button>}
-              {!integrations.mail && manualComposerOpened && <button className="button button--primary" onClick={() => void confirmManualSent()} disabled={sendingEmail}>{sendingEmail ? "Wird gespeichert …" : "Ich habe die Mail gesendet ✓"}</button>}
+              {integrations.mail && <button className="button button--primary" onClick={() => void sendDirect()} disabled={sendingEmail}>{sendingEmail ? "Wird gesendet …" : "E-Mail senden →"}</button>}
+              {!integrations.mail && <a className="button button--primary" href="/dashboard/email">Postfach verbinden →</a>}
             </div>
-            <p className="security-note">{integrations.mail ? "Der API-Versand erfolgt genau einmal. Erst danach werden CRM-Status und Follow-ups gesetzt." : manualComposerOpened ? "Bestätige den Versand erst, nachdem du in STRATO Mail wirklich auf Senden geklickt hast." : "STRATO Mail öffnet sich leer. Drücke dort Strg+V; GIF-Vorschau, Play-Button und Link werden gemeinsam eingefügt."}</p>
+            <p className="security-note">{integrations.mail ? "Die E-Mail wird direkt aus dem Growth OS versendet. Erst danach werden CRM-Status und Follow-ups gesetzt." : manualComposerOpened ? "Der Versand wird direkt im Growth OS verarbeitet." : "Die Nachricht wird direkt über das integrierte Postfach versendet."}</p>
           </section>
         </div>
       )}
