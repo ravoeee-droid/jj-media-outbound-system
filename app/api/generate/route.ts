@@ -72,7 +72,6 @@ export async function POST(request: Request) {
       throw new Error("FORBIDDEN");
     }
     const profileUrl = lead.instagramUrl || (/instagram\.com/i.test(lead.websiteUrl) ? lead.websiteUrl : "");
-    if (!profileUrl) return Response.json({ error: "Für diesen Lead fehlt das Instagram-Profil." }, { status: 400 });
 
     const [assetRows, settingRows] = await Promise.all([
       db
@@ -83,6 +82,11 @@ export async function POST(request: Request) {
         .limit(200),
       db.select().from(settings).where(eq(settings.workspaceId, workspace.workspaceId)),
     ]);
+    const manualProfilePreview = assetRows.find((asset) => asset.kind === `social_profile_upload:${lead.id}`);
+    if (!manualProfilePreview && !profileUrl) {
+      return Response.json({ error: "Bitte ein Instagram-Profil hinterlegen oder einen Profil-Screenshot hochladen." }, { status: 400 });
+    }
+
     const masterVideo = assetRows.find((asset) => asset.kind === "master_video");
     if (!masterVideo) {
       return Response.json(
@@ -113,7 +117,6 @@ export async function POST(request: Request) {
       .set({ videoStatus: "processing", updatedAt: new Date() })
       .where(eq(leads.id, lead.id));
 
-    const manualProfilePreview = assetRows.find((asset) => asset.kind === `social_profile_upload:${lead.id}`);
     let screenshot: Buffer;
     let capture = { consentClicks: 0, hiddenOverlays: 0, source: "upload" as "upload" | "instagram" };
     if (manualProfilePreview) {
