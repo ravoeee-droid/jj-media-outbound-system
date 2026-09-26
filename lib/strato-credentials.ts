@@ -114,10 +114,17 @@ export async function ensureBootstrapStratoAccounts(workspaceId: string) {
   if (!primary) return;
 
   for (const account of BOOTSTRAP_ACCOUNTS) {
-    const existing = await getStoredStratoCredentials(workspaceId, account.email);
+    const normalizedEmail = account.email.trim().toLowerCase();
+    if (primary.email.trim().toLowerCase() === normalizedEmail) {
+      // If the primary mailbox is already this address, remove any stale scoped copy
+      // so the switcher never shows the same mailbox twice.
+      await deleteStoredStratoCredentials(workspaceId, normalizedEmail);
+      continue;
+    }
+    const existing = await getStoredStratoCredentials(workspaceId, normalizedEmail);
     if (existing) continue;
     await saveStoredStratoCredentials(workspaceId, {
-      email: account.email,
+      email: normalizedEmail,
       password: primary.password,
       senderName: account.senderName,
     }, true);
@@ -145,5 +152,10 @@ export async function getStoredStratoAccounts(workspaceId: string) {
     } catch { /* ignore malformed stored account */ }
   }
 
-  return accounts.sort((a, b) => Number(b.primary) - Number(a.primary) || a.email.localeCompare(b.email));
+  const unique = new Map<string, { email: string; senderName: string; primary: boolean }>();
+  for (const account of accounts) {
+    const existing = unique.get(account.email);
+    if (!existing || account.primary) unique.set(account.email, account);
+  }
+  return [...unique.values()].sort((a, b) => Number(b.primary) - Number(a.primary) || a.email.localeCompare(b.email));
 }
