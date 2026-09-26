@@ -8,6 +8,7 @@ type ThreadRow = { id: string; from: string; to: string; subject: string; date: 
 type MailMessage = { id: string; threadId: string; labels: string[]; from: string; to: string; cc: string; subject: string; date: string; messageId: string; references: string; body: string; snippet: string; internalDate: string };
 type ThreadDetail = { id: string; subject: string; unread: boolean; starred: boolean; messages: MailMessage[] };
 type Profile = { emailAddress: string };
+type MailAccount = { email: string; senderName: string; primary: boolean };
 type Composer = { to: string; cc: string; bcc: string; subject: string; body: string };
 
 const folders: Array<{ key: MailView; label: string; hint: string; glyph: string }> = [
@@ -37,6 +38,8 @@ export default function EmailWorkspace() {
   const [view, setView] = useState<MailView>("inbox");
   const [threads, setThreads] = useState<ThreadRow[]>([]);
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [accounts, setAccounts] = useState<MailAccount[]>([]);
+  const [account, setAccount] = useState("");
   const [connected, setConnected] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -64,33 +67,40 @@ export default function EmailWorkspace() {
     setError("");
     try {
       const params = new URLSearchParams({ view: nextView });
+      if (account) params.set("account", account);
       if (nextSearch.trim()) params.set("q", nextSearch.trim());
       const response = await fetch(`/api/email?${params}`, { cache: "no-store" });
-      const payload = await response.json() as { connected?: boolean; threads?: ThreadRow[]; profile?: Profile; error?: string };
+      const payload = await response.json() as { connected?: boolean; threads?: ThreadRow[]; profile?: Profile; accounts?: MailAccount[]; error?: string };
       if (!response.ok) throw new Error(payload.error || "STRATO Postfach konnte nicht geladen werden.");
       setConnected(Boolean(payload.connected));
       setThreads(payload.threads || []);
       setProfile(payload.profile || null);
+      if (payload.accounts?.length) {
+        setAccounts(payload.accounts);
+        setAccount((current) => current || payload.profile?.emailAddress || payload.accounts?.[0]?.email || "");
+      }
       if (payload.profile?.emailAddress) setSetupEmail((current) => current || payload.profile?.emailAddress || "");
       setSelectedIds([]);
     } catch (err) { setError(err instanceof Error ? err.message : "STRATO Postfach konnte nicht geladen werden."); }
     finally { if (!quiet) setLoading(false); }
-  }, []);
+  }, [account]);
 
   const loadThread = useCallback(async (threadId: string) => {
     setSelectedThreadId(threadId); setDetailLoading(true); setError("");
     try {
-      const response = await fetch(`/api/email?threadId=${encodeURIComponent(threadId)}`, { cache: "no-store" });
+      const params = new URLSearchParams({ threadId });
+      if (account) params.set("account", account);
+      const response = await fetch(`/api/email?${params.toString()}`, { cache: "no-store" });
       const payload = await response.json() as { thread?: ThreadDetail; profile?: Profile; error?: string };
       if (!response.ok || !payload.thread) throw new Error(payload.error || "E-Mail konnte nicht geladen werden.");
       setDetail(payload.thread); if (payload.profile) setProfile(payload.profile);
       if (payload.thread.unread) {
-        void fetch("/api/email", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "modify", threadIds: [threadId], operation: "read" }) })
+        void fetch("/api/email", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "modify", account: account || undefined, threadIds: [threadId], operation: "read" }) })
           .then(() => setThreads((current) => current.map((row) => row.id === threadId ? { ...row, unread: false } : row)));
       }
     } catch (err) { setError(err instanceof Error ? err.message : "E-Mail konnte nicht geladen werden."); setDetail(null); }
     finally { setDetailLoading(false); }
-  }, []);
+  }, [account]);
 
   useEffect(() => { const timer = window.setTimeout(() => void loadList(view, search), 0); return () => window.clearTimeout(timer); }, [loadList, search, view]);
   useEffect(() => {
@@ -115,7 +125,7 @@ export default function EmailWorkspace() {
     if (!ids.length || busy) return;
     setBusy(true);
     try {
-      const response = await fetch("/api/email", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "modify", threadIds: ids, operation }) });
+      const response = await fetch("/api/email", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "modify", account: account || undefined, threadIds: ids, operation }) });
       const payload = await response.json() as { error?: string; changed?: number };
       if (!response.ok) throw new Error(payload.error || "Aktion fehlgeschlagen.");
       const remove = ["archive", "trash", "spam"].includes(operation) || operation === "untrash";
@@ -130,7 +140,7 @@ export default function EmailWorkspace() {
   async function submitComposer(event: FormEvent, asDraft = false) {
     event.preventDefault(); if (busy) return; setBusy(true);
     try {
-      const response = await fetch("/api/email", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: asDraft ? "draft" : "send", ...composer }) });
+      const response = await fetch("/api/email", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: asDraft ? "draft" : "send", account: account || undefined, ...composer }) });
       const payload = await response.json() as { error?: string };
       if (!response.ok) throw new Error(payload.error || "E-Mail konnte nicht verarbeitet werden.");
       setComposerOpen(false); setComposer(emptyComposer); notify(asDraft ? "Entwurf bei STRATO gespeichert." : "E-Mail über STRATO gesendet.");
@@ -175,7 +185,7 @@ export default function EmailWorkspace() {
     if (!to) { notify("Empfänger konnte nicht erkannt werden."); return; }
     setBusy(true);
     try {
-      const response = await fetch("/api/email", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "reply", threadId: detail.id, to, subject: detail.subject, body: reply.trim() }) });
+      const response = await fetch("/api/email", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "reply", account: account || undefined, threadId: detail.id, to, subject: detail.subject, body: reply.trim() }) });
       const payload = await response.json() as { error?: string };
       if (!response.ok) throw new Error(payload.error || "Antwort konnte nicht gesendet werden.");
       setReply(""); notify("Antwort über STRATO gesendet.");
@@ -206,6 +216,7 @@ export default function EmailWorkspace() {
       <aside className={styles.mailNav}>
         <button className={styles.composeButton} type="button" onClick={() => { setComposer(emptyComposer); setComposerOpen(true); }}><span>＋</span> Neue E-Mail</button>
         <div className={styles.accountCard}><span className={styles.accountAvatar}>{profile?.emailAddress?.[0]?.toUpperCase() || "@"}</span><div><strong>{profile?.emailAddress || "STRATO Mail"}</strong><small>IMAP + SMTP · Live</small></div><i /></div>
+        {accounts.length > 1 && <label style={{ display: "grid", gap: 6, margin: "0 0 14px" }}><small style={{ fontWeight: 800, opacity: .65 }}>POSTFACH</small><select value={account} onChange={(event) => { setAccount(event.target.value); setSelectedThreadId(null); setDetail(null); setSearch(""); setSearchInput(""); }} style={{ width: "100%", border: "1px solid rgba(17,16,20,.08)", borderRadius: 10, padding: "10px 11px", background: "#fff" }}>{accounts.map((item) => <option key={item.email} value={item.email}>{item.senderName} · {item.email}</option>)}</select></label>}
         <nav className={styles.folderList}>{folders.map((folder) => <button key={folder.key} type="button" onClick={() => { setView(folder.key); setSearch(""); setSearchInput(""); setSelectedThreadId(null); setDetail(null); }} className={view === folder.key ? styles.folderActive : styles.folderButton}><span className={styles.folderGlyph}>{folder.glyph}</span><span><strong>{folder.label}</strong><small>{folder.hint}</small></span></button>)}</nav>
         <div className={styles.shortcutCard}><span>⌨</span><div><strong>Schneller arbeiten</strong><small><kbd>/</kbd> Suche · <kbd>C</kbd> neue E-Mail</small></div></div>
       </aside>
