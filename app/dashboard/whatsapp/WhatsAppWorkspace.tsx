@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { DEFAULT_AGENT, type AgentConfig, type AgentMode, type CalendarSlot, type KnowledgeEntry } from "@/lib/whatsapp/policy";
 import styles from "./WhatsAppWorkspace.module.css";
 
@@ -41,7 +41,10 @@ export default function WhatsAppWorkspace() {
   const selectedRef = useRef<string | null>(null);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [search, setSearch] = useState("");
+  const [searchDeferred, setSearchDeferred] = useState("");
   const [filter, setFilter] = useState("all");
+  const refreshBusyRef = useRef(false);
+  const detailBusyRef = useRef(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -66,16 +69,28 @@ export default function WhatsAppWorkspace() {
   }, []);
 
   const refresh = useCallback(async () => {
-    const result = await request<Data>("/api/whatsapp");
-    setData(result);
-    setRefreshedAt(Date.now());
-    if (!dirtyRef.current) setConfig(result.config);
-    return result;
-  }, []);
+    if (refreshBusyRef.current) return data;
+    refreshBusyRef.current = true;
+    try {
+      const result = await request<Data>("/api/whatsapp");
+      setData(result);
+      setRefreshedAt(Date.now());
+      if (!dirtyRef.current) setConfig(result.config);
+      return result;
+    } finally {
+      refreshBusyRef.current = false;
+    }
+  }, [data]);
   const refreshDetail = useCallback(async (id: string) => {
-    const result = await request<Detail>(`/api/whatsapp?thread=${id}`);
-    if (selectedRef.current === id) setDetail(result);
-    return result;
+    if (detailBusyRef.current) return null;
+    detailBusyRef.current = true;
+    try {
+      const result = await request<Detail>(`/api/whatsapp?thread=${id}`);
+      if (selectedRef.current === id) setDetail(result);
+      return result;
+    } finally {
+      detailBusyRef.current = false;
+    }
   }, []);
 
   useEffect(() => {
@@ -94,16 +109,23 @@ export default function WhatsAppWorkspace() {
       finally { if (live) setLoading(false); }
     }
     void load();
-    const poll = window.setInterval(() => { if (!document.hidden) void refresh().catch(() => undefined); }, 30_000);
+    const poll = window.setInterval(() => {
+      if (!document.hidden && tab === "inbox") void refresh().catch(() => undefined);
+    }, 60_000);
     return () => { live = false; window.clearInterval(poll); };
-  }, [refresh, chooseThread]);
+  }, [refresh, chooseThread, tab]);
 
   useEffect(() => {
     if (!selected) return;
     void refreshDetail(selected).catch((err) => setError(err.message));
-    const poll = window.setInterval(() => { if (!document.hidden) void refreshDetail(selected).catch(() => undefined); }, 12_000);
+    const poll = window.setInterval(() => { if (!document.hidden && tab === "inbox") void refreshDetail(selected).catch(() => undefined); }, 20_000);
     return () => window.clearInterval(poll);
-  }, [selected, refreshDetail]);
+  }, [selected, refreshDetail, tab]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSearchDeferred(search.trim().toLowerCase()), 180);
+    return () => window.clearTimeout(timer);
+  }, [search]);
 
   function changeConfig(patch: Partial<AgentConfig>) { dirtyRef.current = true; setDirty(true); setConfig((current) => ({ ...current, ...patch })); }
   async function saveConfig(next = config) {
@@ -182,7 +204,17 @@ export default function WhatsAppWorkspace() {
   }
 
   const selectedEntry = config.knowledge.find((entry) => entry.id === entryId) ?? config.knowledge[0];
-  const filtered = data?.threads.filter(({ thread, lead }) => `${lead.company} ${lead.contact} ${thread.phone}`.toLowerCase().includes(search.toLowerCase()) && (filter === "all" || filter === "unread" && thread.unread || filter === thread.status)) ?? [];
+  const filtered = useMemo(() => data?.threads.filter(({ thread, lead }) =>
+    `${lead.company} ${lead.contact} ${thread.phone} ${thread.summary}`.toLowerCase().includes(searchDeferred)
+    && (filter === "all" || filter === "unread" && thread.unread || filter === thread.status)
+  ) ?? [], [data?.threads, searchDeferred, filter]);
+
+  const inboxStats = useMemo(() => ({
+    unread: data?.threads.filter((row) => row.thread.unread).length ?? 0,
+    handoff: data?.threads.filter((row) => row.thread.status === "handoff").length ?? 0,
+    booked: data?.threads.filter((row) => row.thread.status === "booked").length ?? 0,
+    open: data?.threads.filter((row) => row.thread.status === "open").length ?? 0,
+  }), [data?.threads]);
   const latestDraft = detail?.messages.filter((message) => message.status === "draft" && message.metadata.actor !== "human").at(-1);
   const activeQueue = data?.queue.filter((item) => item.status === "queued").length ?? 0;
   const reviewQueue = data?.queue.filter((item) => item.status === "review").length ?? 0;
@@ -198,9 +230,9 @@ export default function WhatsAppWorkspace() {
       <button className={styles.textButton} onClick={() => setTab("connection")}>Verbindungen</button>
     </div>
     <div className={styles.metrics}>
-      <div><span>Antworten offen</span><strong>{data?.threads.filter((r) => r.thread.unread).length ?? "–"}</strong></div>
-      <div><span>Für euch</span><strong>{data?.threads.filter((r) => r.thread.status === "handoff").length ?? "–"}</strong></div>
-      <div><span>Termine gebucht</span><strong>{data?.threads.filter((r) => r.thread.status === "booked").length ?? "–"}</strong></div>
+      <div><span>Antworten offen</span><strong>{data ? inboxStats.unread : "–"}</strong></div>
+      <div><span>Für euch</span><strong>{data ? inboxStats.handoff : "–"}</strong></div>
+      <div><span>Termine gebucht</span><strong>{data ? inboxStats.booked : "–"}</strong></div>
       <div><span>Heute angeschrieben</span><strong>{data?.sentToday ?? "–"}<small> / {data?.config.dailyOutreachLimit ?? 30}</small></strong></div>
     </div>
     <nav className={styles.tabs} aria-label="WhatsApp-Bereiche">{tabs.map((item) => <button key={item.id} className={tab === item.id ? styles.tabActive : ""} aria-current={tab === item.id ? "page" : undefined} onClick={() => setTab(item.id)}>{item.label}{item.id === "knowledge" && dirty && <span aria-label="Ungespeicherte Änderungen"> •</span>}</button>)}</nav>
@@ -210,7 +242,17 @@ export default function WhatsAppWorkspace() {
     {!loading && !data && <div className={styles.empty}><h2>WhatsApp konnte nicht geladen werden</h2><p>Bitte die Verbindung erneut prüfen.</p><button className={styles.primary} onClick={() => void refresh().then(() => setError("")).catch((err) => setError(err.message))}>Erneut laden</button></div>}
 
     {tab === "inbox" && data && <>
-      <div className={styles.toolbar}><h2>Unterhaltungen <span>{data.threads.length}</span></h2><button className={styles.primary} onClick={() => setShowNew(!showNew)}>{showNew ? "Schließen" : "+ Kontakt öffnen"}</button></div>
+      <div className={styles.toolbar}>
+        <div>
+          <small style={{fontWeight:800,letterSpacing:".08em",color:"#7b7278"}}>WHATSAPP SALES DESK</small>
+          <h2>Unterhaltungen <span>{data.threads.length}</span></h2>
+        </div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginLeft:"auto"}}>
+          <button className={filter === "unread" ? styles.primary : styles.secondary} onClick={() => setFilter(filter === "unread" ? "all" : "unread")}>Ungelesen {inboxStats.unread}</button>
+          <button className={filter === "handoff" ? styles.primary : styles.secondary} onClick={() => setFilter(filter === "handoff" ? "all" : "handoff")}>Übernahme {inboxStats.handoff}</button>
+          <button className={styles.primary} onClick={() => setShowNew(!showNew)}>{showNew ? "Schließen" : "+ Kontakt öffnen"}</button>
+        </div>
+      </div>
       {showNew && <form className={styles.newContact} onSubmit={addContact}>
         <label>Lead<select required value={newLeadId} onChange={(event) => { setNewLeadId(event.target.value); setNewPhone(data.leads.find((lead) => lead.id === event.target.value)?.phone || ""); }}><option value="">Unternehmen auswählen</option>{data.leads.map((lead) => <option key={lead.id} value={lead.id}>{lead.company}</option>)}</select></label>
         <label>WhatsApp-Nummer<input required type="tel" value={newPhone} onChange={(event) => setNewPhone(event.target.value)} placeholder="+49 …" /></label>
