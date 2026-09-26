@@ -52,6 +52,9 @@ export default function LandingStudio({ leads, notify }: { leads: StudioLead[]; 
   const [config, setConfig] = useState<LandingStudioConfig>(() => structuredClone(defaultLandingStudioConfig));
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [masterUploading, setMasterUploading] = useState(false);
+  const [masterProgress, setMasterProgress] = useState(0);
+  const [renderingLead, setRenderingLead] = useState(false);
   const [selectedAsset, setSelectedAsset] = useState("");
   const [selectedRole, setSelectedRole] = useState<"speaker" | "proof">("proof");
   const [activePreviewIndex, setActivePreviewIndex] = useState(0);
@@ -142,6 +145,86 @@ export default function LandingStudio({ leads, notify }: { leads: StudioLead[]; 
     }]);
   }
 
+  async function uploadMasterVideo(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file || masterUploading) return;
+    setMasterUploading(true);
+    setMasterProgress(0);
+    try {
+      if (file.size > 80 * 1024 * 1024) throw new Error("Jessicas Mastervideo darf maximal 80 MB groß sein.");
+      const contentType = normalizeMediaType(file);
+      if (!contentType.startsWith("video/")) throw new Error("Bitte ein MP4- oder WebM-Video auswählen.");
+      validateBrowserMedia(file, contentType);
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]+/g, "-");
+      const blob = await upload(`master-videos/${Date.now()}-${safeName}`, file, {
+        access: "private",
+        handleUploadUrl: "/api/assets/upload",
+        multipart: true,
+        contentType,
+        clientPayload: JSON.stringify({ kind: "master_video", filename: file.name, contentType, size: file.size }),
+        onUploadProgress: ({ percentage }) => setMasterProgress(Math.max(1, Math.round(percentage))),
+      });
+      const response = await fetch("/api/assets", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          kind: "master_video",
+          blobUrl: blob.url,
+          pathname: blob.pathname,
+          filename: file.name,
+          contentType,
+          size: file.size,
+        }),
+      });
+      const payload = await response.json() as { asset?: MediaAsset; error?: string };
+      if (!response.ok || !payload.asset) throw new Error(payload.error || "Mastervideo konnte nicht gespeichert werden.");
+      setAssets((current) => [payload.asset!, ...current.filter((asset) => asset.kind !== "master_video")]);
+      notify("Jessicas Mastervideo ist gespeichert und gilt ab jetzt für alle Leads.");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Mastervideo konnte nicht hochgeladen werden.");
+    } finally {
+      setMasterUploading(false);
+      setMasterProgress(0);
+      event.target.value = "";
+    }
+  }
+
+  function applyJessicaTemplate() {
+    const next: LandingStudioConfig = {
+      ...config,
+      segments: [
+        { id: "social-intro", type: "social", role: "social", label: "Lead-Profil", duration: 6 },
+        { id: "jessica-master", type: "video", role: "speaker", label: "Jessica erklärt die 3 Hebel", assetId: MASTER_VIDEO_ASSET_ID },
+      ],
+    };
+    setConfig(next);
+    setActivePreviewIndex(0);
+    notify("Vorlage „Jessica + Lead“ geladen. Jetzt speichern und für beliebig viele Leads verwenden.");
+  }
+
+  async function renderPreviewLead() {
+    if (!previewLead || renderingLead) return;
+    if (!masterAsset) {
+      notify("Bitte zuerst Jessicas Mastervideo hochladen.");
+      return;
+    }
+    setRenderingLead(true);
+    try {
+      const response = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ leadId: previewLead.id }),
+      });
+      const payload = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(payload.error || "Testvideo konnte nicht gerendert werden.");
+      notify(`Fertiges MP4 für ${previewLead.company} wurde gerendert. Die persönliche Landingpage ist bereit.`);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Testvideo konnte nicht gerendert werden.");
+    } finally {
+      setRenderingLead(false);
+    }
+  }
+
   async function uploadMedia(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
     if (!files.length) return;
@@ -225,12 +308,24 @@ export default function LandingStudio({ leads, notify }: { leads: StudioLead[]; 
             <option value="global">Standard für alle Leads</option>
             {leads.map((lead) => <option value={lead.id} key={lead.id}>{lead.company}</option>)}
           </select>
+          <button className="button button--soft" onClick={applyJessicaTemplate}>Jessica + Lead Vorlage</button>
           <button className="button button--primary" onClick={save}>Vorlage speichern</button>
         </div>
       </div>
 
       <div className="studio-layout">
         <div className="studio-controls">
+          <article className="studio-card">
+            <div className="studio-card__head"><div><small>00</small><strong>Jessica-Mastervideo</strong></div><span>{masterAsset ? "Bereit" : "Fehlt"}</span></div>
+            <p style={{margin:"0 0 12px",lineHeight:1.5}}>Dieses Video wird einmal aufgenommen und anschließend automatisch für alle Leads verwendet. Pro Lead werden nur Profil, Firmenname und personalisierte Elemente ausgetauscht.</p>
+            <label className={`studio-upload ${masterUploading ? "is-uploading" : ""}`}>
+              <input type="file" accept="video/mp4,video/webm" onChange={uploadMasterVideo} disabled={masterUploading} />
+              <strong>{masterUploading ? `Jessica-Video wird hochgeladen … ${masterProgress} %` : masterAsset ? "Jessica-Mastervideo ersetzen" : "Jessica-Mastervideo hochladen"}</strong>
+              <small>Einmal hochladen · MP4/WebM bis 80 MB · gilt global für alle Lead-Videos</small>
+            </label>
+            {masterAsset && <div className="panel-info"><span className="live-dot" />Aktiv: {masterAsset.filename}</div>}
+          </article>
+
           <article className="studio-card">
             <div className="studio-card__head"><div><small>01</small><strong>Texte & Branding</strong></div><span>Live</span></div>
             <label>Headline<input value={config.headline} onChange={(event) => patch("headline", event.target.value)} /></label>
@@ -337,7 +432,10 @@ export default function LandingStudio({ leads, notify }: { leads: StudioLead[]; 
         <aside className="studio-preview">
           <div className="studio-preview__bar">
             <span><i />Echte Live-Vorschau</span>
-            {previewLead && <a href={`/v/${previewLead.slug}`} target="_blank" rel="noreferrer">Echte LP öffnen ↗</a>}
+            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              {previewLead && <button className="button button--soft" disabled={renderingLead || !masterAsset} onClick={() => void renderPreviewLead()}>{renderingLead ? "MP4 rendert …" : "Test-MP4 rendern"}</button>}
+              {previewLead && <a href={`/v/${previewLead.slug}`} target="_blank" rel="noreferrer">Echte LP öffnen ↗</a>}
+            </div>
           </div>
           <SegmentedVideoPlayer
             segments={previewSegments}
