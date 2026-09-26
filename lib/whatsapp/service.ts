@@ -25,6 +25,9 @@ export async function openThread(workspaceId: string, leadId: string, phoneInput
   if (!lead) throw new Error("Der Lead wurde nicht gefunden.");
   const [existing] = await db.select().from(whatsappThreads).where(and(eq(whatsappThreads.workspaceId, workspaceId), eq(whatsappThreads.leadId, leadId))).limit(1);
   if (existing) return existing;
+  if (!["ready", "active", "sent", "replied"].includes(lead.whatsappStatus)) {
+    throw new Error("Für diesen Lead ist keine WhatsApp-fähige Nummer bestätigt.");
+  }
   const phone = normalizePhone(phoneInput || lead.phone);
   if (!phone) throw new Error("Bitte eine gültige WhatsApp-Nummer mit Landesvorwahl hinterlegen.");
   const config = await getAgentConfig(workspaceId);
