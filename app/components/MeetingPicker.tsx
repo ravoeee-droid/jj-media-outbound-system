@@ -39,11 +39,13 @@ export default function MeetingPicker({
   onBooked,
   onManual,
   onCancel,
+  source = "crm",
 }: {
   leadId: string;
   onBooked: (booking: Booking) => void;
   onManual: () => void;
   onCancel: () => void;
+  source?: "crm" | "daily_queue";
 }) {
   const [payload, setPayload] = useState<SlotPayload | null>(null);
   const [selected, setSelected] = useState<Slot | null>(null);
@@ -93,7 +95,7 @@ export default function MeetingPicker({
       const response = await fetch("/api/calendar", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action: "book", leadId, start: selected.start }),
+        body: JSON.stringify({ action: "book", leadId, start: selected.start, source }),
       });
       const result = await response.json() as { booking?: Booking; error?: string };
       if (response.status === 409) {

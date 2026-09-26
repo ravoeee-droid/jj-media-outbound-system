@@ -136,9 +136,25 @@ export default function DailyQueueWorkspace() {
     void load(value);
   }
 
-  function startCall() {
+  async function startCall() {
     if (!current?.phone || busy) return;
     setCallStarted(true);
+    try {
+      const response = await fetch("/api/daily-queue", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "call_started", leadId: current.id }),
+        keepalive: true,
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({})) as { error?: string };
+        setCallStarted(false);
+        setError(payload.error || "Die Queue hat sich geändert. Bitte kurz neu laden.");
+        if (response.status === 409 || response.status === 403 || response.status === 404) return;
+      }
+    } catch {
+      // Ein reiner Tracking-/Netzwerkfehler darf den echten Anruf nicht blockieren.
+    }
     window.location.href = phoneHref(current.phone);
   }
 
@@ -414,7 +430,7 @@ export default function DailyQueueWorkspace() {
               <a href="/dashboard/crm">CRM öffnen ↗</a>
             </div>
 
-            <button type="button" className={styles.callButton} onClick={startCall} disabled={Boolean(busy)}>
+            <button type="button" className={styles.callButton} onClick={() => void startCall()} disabled={Boolean(busy)}>
               <span>☎</span>
               <div><strong>{callStarted ? "Anruf läuft / Ergebnis eintragen" : "Jetzt anrufen"}</strong><small>{current.phone}</small></div>
               <b>→</b>
@@ -476,6 +492,7 @@ export default function DailyQueueWorkspace() {
             {meetingPicker && current && (
               <MeetingPicker
                 leadId={current.id}
+                source="daily_queue"
                 onBooked={(booking) => {
                   setMeetingPicker(false);
                   setMeetingSuccess({

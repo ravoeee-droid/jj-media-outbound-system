@@ -11,8 +11,11 @@ type Person = {
   name: string;
   email: string;
   role: string;
+  isCaller: boolean;
   calendarConnected: boolean;
   calls: number;
+  completedCalls: number;
+  inProgressCalls: number;
   connected: number;
   noAnswer: number;
   infoRequested: number;
@@ -21,6 +24,7 @@ type Person = {
   whatsappRequested: number;
   whatsappSent: number;
   booked: number;
+  directBooked: number;
   queue: number;
   callbacks: number;
   highPriority: number;
@@ -36,6 +40,8 @@ type Payload = {
   generatedAt: string;
   totals: {
     calls: number;
+    completedCalls: number;
+    inProgressCalls: number;
     connected: number;
     noAnswer: number;
     infoRequested: number;
@@ -43,6 +49,7 @@ type Payload = {
     whatsappRequested: number;
     whatsappSent: number;
     booked: number;
+    directBooked: number;
     queue: number;
     openTasks: number;
     overdueTasks: number;
@@ -78,7 +85,9 @@ function when(value: string | null) {
 }
 
 function statusFor(person: Person) {
-  if (person.overdueTasks > 0 || person.queue === 0) return "critical";
+  if (person.overdueTasks > 0) return "critical";
+  if (!person.isCaller) return "good";
+  if (person.queue === 0) return "critical";
   if (person.queue < 5) return "warn";
   return "good";
 }
@@ -118,11 +127,11 @@ export default function ManagerCockpit() {
   const metrics = useMemo(() => {
     if (!data) return [];
     return [
-      { label: "Calls", value: data.totals.calls, note: data.totals.noAnswer + " nicht erreicht" },
+      { label: "Calls", value: data.totals.calls, note: data.totals.inProgressCalls ? data.totals.inProgressCalls + " noch ohne Ergebnis" : data.totals.noAnswer + " nicht erreicht" },
       { label: "Gespräche", value: data.totals.connected, note: data.totals.contactRate + "% Kontaktquote" },
       { label: "Info gesendet", value: data.totals.infoSent, note: data.totals.infoRequested + " Info-Wünsche" },
       { label: "WhatsApp", value: data.totals.whatsappSent, note: data.totals.whatsappRequested + " gewünscht" },
-      { label: "Termine", value: data.totals.booked, note: data.totals.bookingRate + "% Gespräch → Termin" },
+      { label: "Termine", value: data.totals.booked, note: data.totals.directBooked + " direkt im Call · " + data.totals.bookingRate + "% Quote" },
       { label: "Offene Calls", value: data.totals.queue, note: data.system.callReadyPool + " zusätzlich im Vorrat" },
     ];
   }, [data]);
@@ -191,6 +200,7 @@ export default function ManagerCockpit() {
           <div>
             <small>{data?.canViewTeam ? "TEAM PERFORMANCE" : "MEINE PERFORMANCE"}</small>
             <h2>{data?.canViewTeam ? "Wer hat genug Arbeit – und was kommt dabei raus?" : "Dein aktueller Arbeitsstand"}</h2>
+            <p className={styles.attribution}>Calls & Gesprächsergebnisse = tatsächlicher Bearbeiter · Versand, Termine & Queue = aktueller Lead-Owner.</p>
           </div>
           <Link href="/dashboard/queue">Tages-Queue öffnen →</Link>
         </div>
@@ -219,13 +229,13 @@ export default function ManagerCockpit() {
                       <div><strong>{person.name}</strong><small>{person.role} · {person.calendarConnected ? "Kalender ✓" : "Kalender offen"}</small></div>
                     </div>
                   </td>
-                  <td><strong>{person.queue}</strong><small>{person.callbacks} Rückrufe · {person.highPriority} Prio</small></td>
-                  <td><strong>{person.calls}</strong><small>{person.noAnswer} nicht erreicht</small></td>
-                  <td><strong>{person.connected}</strong><small>{person.contactRate}% Quote</small></td>
+                  <td><strong>{person.isCaller ? person.queue : "—"}</strong><small>{person.isCaller ? person.callbacks + " Rückrufe · " + person.highPriority + " Prio" : "keine Call-Rolle"}</small></td>
+                  <td><strong>{person.calls}</strong><small>{person.inProgressCalls ? person.inProgressCalls + " offen · " + person.noAnswer + " nicht erreicht" : person.noAnswer + " nicht erreicht"}</small></td>
+                  <td><strong>{person.connected}</strong><small>{person.contactRate}% von {person.completedCalls} Ergebnissen</small></td>
                   <td><strong>{person.infoSent}</strong><small>{person.infoRequested} gewünscht</small></td>
                   <td><strong>{person.whatsappSent}</strong><small>{person.whatsappRequested} gewünscht</small></td>
-                  <td><strong>{person.booked}</strong><small>{periodLabel}</small></td>
-                  <td><span className={styles.rate}>{person.bookingRate}%</span><small>Gespräch → Termin</small></td>
+                  <td><strong>{person.booked}</strong><small>{person.directBooked} direkt im Call</small></td>
+                  <td><span className={styles.rate}>{person.bookingRate}%</span><small>direkte Call-Conversion</small></td>
                   <td><strong className={person.overdueTasks ? styles.overdue : ""}>{person.openTasks}</strong><small>{person.overdueTasks ? String(person.overdueTasks) + " überfällig" : "nichts überfällig"}</small></td>
                 </tr>
               ))}
@@ -242,7 +252,7 @@ export default function ManagerCockpit() {
         <span>→</span>
         <div><small>INFO / WHATSAPP</small><strong>{(data?.totals.infoRequested || 0) + (data?.totals.whatsappRequested || 0)}</strong></div>
         <span>→</span>
-        <div><small>TERMINE</small><strong>{data?.totals.booked || 0}</strong></div>
+        <div><small>DIREKT GEBUCHT</small><strong>{data?.totals.directBooked || 0}</strong></div>
       </section>
     </div>
   );

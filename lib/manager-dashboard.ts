@@ -15,31 +15,16 @@ import {
   whatsappThreads,
   workspaceMembers,
 } from "@/db/schema";
-import { getDailyQueue } from "@/lib/daily-queue";
+import { getDailyQueueStatsForOwners } from "@/lib/daily-queue";
 import { getLeadSupplyConfig, getLeadSupplyLastRun } from "@/lib/lead-supply";
 import { getResearchFeedConfig, getResearchFeedLastRun } from "@/lib/research-feed";
 import { hasPermission, normalizedPermissions, normalizedRole } from "@/lib/team";
 
 export type ManagerRange = 1 | 7 | 30;
 
-const CALL_TYPES = [
-  "call_no_answer",
-  "call_info_requested",
-  "call_whatsapp_requested",
-  "callback_scheduled",
-  "meeting_scheduled",
-  "calendar",
-  "no_interest",
-] as const;
-
-const CONNECTED_TYPES = [
-  "call_info_requested",
-  "call_whatsapp_requested",
-  "callback_scheduled",
-  "meeting_scheduled",
-  "calendar",
-  "no_interest",
-] as const;
+const TRACKED_CALL_TYPES = ["call_started", "call_result"] as const;
+const CONNECTED_RESULTS = ["info_requested", "whatsapp_requested", "callback", "meeting", "no_interest"] as const;
+const CALLER_ROLES = new Set(["owner", "admin", "sales", "setter"]);
 
 function offsetMinutes(timeZone: string, date: Date) {
   const part = new Intl.DateTimeFormat("en-US", {
@@ -65,9 +50,9 @@ function berlinStart(range: ManagerRange) {
   const year = Number(parts.year);
   const month = Number(parts.month);
   const day = Number(parts.day) - (range - 1);
-  const noon = new Date(Date.UTC(year, month - 1, day, 12));
-  const offset = offsetMinutes(timeZone, noon);
-  return new Date(Date.UTC(year, month - 1, day, 0) - offset * 60_000);
+  const utcMidnight = new Date(Date.UTC(year, month - 1, day, 0));
+  const offset = offsetMinutes(timeZone, utcMidnight);
+  return new Date(utcMidnight.getTime() - offset * 60_000);
 }
 
 type Member = {
@@ -97,25 +82,41 @@ async function loadMembers(workspaceId: string): Promise<Member[]> {
 
   const unique = new Map<string, Member>();
   for (const row of rows) {
-    if (row.status !== "active" || unique.has(row.userId)) continue;
+    if (row.status !== "active") continue;
     const role = normalizedRole(row.role);
+    const calendarConnected = Boolean(
+      row.googleScope?.includes("https://www.googleapis.com/auth/calendar.events")
+      && row.googleScope?.includes("https://www.googleapis.com/auth/calendar.freebusy"),
+    );
+    const existing = unique.get(row.userId);
+    if (existing) {
+      existing.calendarConnected = existing.calendarConnected || calendarConnected;
+      continue;
+    }
     unique.set(row.userId, {
       userId: row.userId,
       name: row.name || row.email || "Mitarbeiter",
       email: row.email || "",
       role,
       permissions: normalizedPermissions(role, row.permissions),
-      calendarConnected: Boolean(
-        row.googleScope?.includes("https://www.googleapis.com/auth/calendar.events")
-        && row.googleScope?.includes("https://www.googleapis.com/auth/calendar.freebusy"),
-      ),
+      calendarConnected,
     });
   }
   return [...unique.values()];
 }
 
-function countTypes(bucket: Map<string, number>, types: readonly string[]) {
-  return types.reduce((sum, type) => sum + (bucket.get(type) || 0), 0);
+function callResult(metadata: unknown, detail: string) {
+  if (metadata && typeof metadata === "object" && !Array.isArray(metadata)) {
+    const value = (metadata as { result?: unknown }).result;
+    if (typeof value === "string") return value;
+  }
+  return detail || "";
+}
+
+function isStale(value: string | null | undefined, hours = 30) {
+  if (!value) return true;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) || Date.now() - date.getTime() > hours * 3_600_000;
 }
 
 export async function getManagerDashboard(args: {
@@ -134,7 +135,6 @@ export async function getManagerDashboard(args: {
   const [
     allMembers,
     activityRows,
-    leadRows,
     outreachRows,
     bookingRows,
     taskRows,
@@ -149,25 +149,33 @@ export async function getManagerDashboard(args: {
     researchRun,
   ] = await Promise.all([
     loadMembers(args.workspaceId),
-    db.select({ userId: activities.userId, leadId: activities.leadId, type: activities.type })
+    db.select({
+      userId: activities.userId,
+      leadId: activities.leadId,
+      leadOwnerId: leads.ownerId,
+      type: activities.type,
+      detail: activities.detail,
+      metadata: activities.metadata,
+    })
       .from(activities)
+      .innerJoin(leads, eq(leads.id, activities.leadId))
       .where(and(
         eq(activities.workspaceId, args.workspaceId),
+        eq(leads.workspaceId, args.workspaceId),
         gte(activities.createdAt, start),
-        inArray(activities.type, [...CALL_TYPES]),
+        inArray(activities.type, [...TRACKED_CALL_TYPES]),
       )),
-    db.select({ id: leads.id, ownerId: leads.ownerId })
-      .from(leads)
-      .where(eq(leads.workspaceId, args.workspaceId)),
-    db.select({ leadId: outreach.leadId, step: outreach.step })
+    db.select({ leadId: outreach.leadId, ownerId: leads.ownerId, step: outreach.step })
       .from(outreach)
+      .innerJoin(leads, eq(leads.id, outreach.leadId))
       .where(and(
         eq(outreach.workspaceId, args.workspaceId),
+        eq(leads.workspaceId, args.workspaceId),
         eq(outreach.status, "sent"),
         isNotNull(outreach.sentAt),
         gte(outreach.sentAt, start),
       )),
-    db.select({ leadId: bookings.leadId })
+    db.select({ leadId: bookings.leadId, ownerId: leads.ownerId })
       .from(bookings)
       .innerJoin(leads, eq(leads.id, bookings.leadId))
       .where(and(
@@ -178,11 +186,13 @@ export async function getManagerDashboard(args: {
     db.select({ assigneeId: tasks.assigneeId, dueAt: tasks.dueAt })
       .from(tasks)
       .where(and(eq(tasks.workspaceId, args.workspaceId), eq(tasks.status, "open"))),
-    db.select({ leadId: whatsappThreads.leadId })
+    db.select({ leadId: whatsappThreads.leadId, ownerId: leads.ownerId })
       .from(whatsappMessages)
       .innerJoin(whatsappThreads, eq(whatsappThreads.id, whatsappMessages.threadId))
+      .innerJoin(leads, eq(leads.id, whatsappThreads.leadId))
       .where(and(
         eq(whatsappMessages.workspaceId, args.workspaceId),
+        eq(leads.workspaceId, args.workspaceId),
         eq(whatsappMessages.direction, "outbound"),
         eq(whatsappMessages.status, "sent"),
         isNotNull(whatsappMessages.sentAt),
@@ -217,35 +227,52 @@ export async function getManagerDashboard(args: {
     ? allMembers
     : allMembers.filter((member) => member.userId === args.currentUserId);
 
-  const ownerByLead = new Map(leadRows.map((lead) => [lead.id, lead.ownerId || ""]));
-  const activityByUser = new Map<string, Map<string, number>>();
+  const activityByUser = new Map<string, { started: number; results: Map<string, number> }>();
   for (const row of activityRows) {
-    const ownerId = ownerByLead.get(row.leadId) || row.userId || "";
-    if (!ownerId) continue;
-    const bucket = activityByUser.get(ownerId) || new Map<string, number>();
-    bucket.set(row.type, (bucket.get(row.type) || 0) + 1);
-    activityByUser.set(ownerId, bucket);
+    const actorId = row.userId || row.leadOwnerId || "";
+    if (!actorId) continue;
+    const bucket = activityByUser.get(actorId) || { started: 0, results: new Map<string, number>() };
+    if (row.type === "call_started") {
+      bucket.started += 1;
+    } else if (row.type === "call_result") {
+      const result = callResult(row.metadata, row.detail);
+      if (result) bucket.results.set(result, (bucket.results.get(result) || 0) + 1);
+    }
+    activityByUser.set(actorId, bucket);
   }
 
   const channelByOwner = new Map<string, { infoSent: number; followupsSent: number; whatsappSent: number; booked: number }>();
+  const infoLeadSeen = new Set<string>();
+  const whatsappLeadSeen = new Set<string>();
   function ownerBucket(ownerId: string) {
     const current = channelByOwner.get(ownerId) || { infoSent: 0, followupsSent: 0, whatsappSent: 0, booked: 0 };
     channelByOwner.set(ownerId, current);
     return current;
   }
   for (const row of outreachRows) {
-    const ownerId = ownerByLead.get(row.leadId) || "";
+    const ownerId = row.ownerId || "";
     if (!ownerId) continue;
     const bucket = ownerBucket(ownerId);
-    if (row.step === 1) bucket.infoSent += 1;
-    else bucket.followupsSent += 1;
+    if (row.step === 1) {
+      const key = ownerId + ":" + row.leadId;
+      if (!infoLeadSeen.has(key)) {
+        infoLeadSeen.add(key);
+        bucket.infoSent += 1;
+      }
+    } else {
+      bucket.followupsSent += 1;
+    }
   }
   for (const row of whatsappRows) {
-    const ownerId = ownerByLead.get(row.leadId) || "";
-    if (ownerId) ownerBucket(ownerId).whatsappSent += 1;
+    const ownerId = row.ownerId || "";
+    if (!ownerId) continue;
+    const key = ownerId + ":" + row.leadId;
+    if (whatsappLeadSeen.has(key)) continue;
+    whatsappLeadSeen.add(key);
+    ownerBucket(ownerId).whatsappSent += 1;
   }
   for (const row of bookingRows) {
-    const ownerId = ownerByLead.get(row.leadId) || "";
+    const ownerId = row.ownerId || "";
     if (ownerId) ownerBucket(ownerId).booked += 1;
   }
 
@@ -258,47 +285,56 @@ export async function getManagerDashboard(args: {
     tasksByUser.set(task.assigneeId, bucket);
   }
 
-  const queueEntries = await Promise.all(members.map(async (member) => ({
-    userId: member.userId,
-    value: await getDailyQueue(args.workspaceId, member.userId, 1),
-  })));
-  const queueByUser = new Map(queueEntries.map((entry) => [entry.userId, entry.value.stats]));
+  const queueEntries = await getDailyQueueStatsForOwners(args.workspaceId, members.map((member) => member.userId));
+  const queueByUser = new Map(queueEntries.map((entry) => [entry.ownerId, {
+    total: entry.total,
+    callbacks: entry.callbacks,
+    highPriority: entry.highPriority,
+  }]));
 
   const people = members.map((member) => {
-    const events = activityByUser.get(member.userId) || new Map<string, number>();
+    const events = activityByUser.get(member.userId) || { started: 0, results: new Map<string, number>() };
     const channels = channelByOwner.get(member.userId) || { infoSent: 0, followupsSent: 0, whatsappSent: 0, booked: 0 };
     const task = tasksByUser.get(member.userId) || { open: 0, overdue: 0 };
     const queue = queueByUser.get(member.userId) || { total: 0, callbacks: 0, highPriority: 0 };
-    const calls = countTypes(events, CALL_TYPES);
-    const connected = countTypes(events, CONNECTED_TYPES);
+    const calls = events.started;
+    const completedCalls = [...events.results.values()].reduce((sum, value) => sum + value, 0);
+    const connected = CONNECTED_RESULTS.reduce((sum, result) => sum + (events.results.get(result) || 0), 0);
+    const directBooked = events.results.get("meeting") || 0;
 
     return {
       userId: member.userId,
       name: member.name,
       email: member.email,
       role: member.role,
+      isCaller: CALLER_ROLES.has(member.role),
       calendarConnected: member.calendarConnected,
       calls,
+      completedCalls,
+      inProgressCalls: Math.max(0, calls - completedCalls),
       connected,
-      noAnswer: events.get("call_no_answer") || 0,
-      infoRequested: events.get("call_info_requested") || 0,
+      noAnswer: events.results.get("no_answer") || 0,
+      infoRequested: events.results.get("info_requested") || 0,
       infoSent: channels.infoSent,
       followupsSent: channels.followupsSent,
-      whatsappRequested: events.get("call_whatsapp_requested") || 0,
+      whatsappRequested: events.results.get("whatsapp_requested") || 0,
       whatsappSent: channels.whatsappSent,
       booked: channels.booked,
+      directBooked,
       queue: queue.total,
       callbacks: queue.callbacks,
       highPriority: queue.highPriority,
       openTasks: task.open,
       overdueTasks: task.overdue,
-      contactRate: calls ? Math.round(connected / calls * 100) : 0,
-      bookingRate: connected ? Math.round(channels.booked / connected * 100) : 0,
+      contactRate: completedCalls ? Math.round(connected / completedCalls * 100) : 0,
+      bookingRate: connected ? Math.round(directBooked / connected * 100) : 0,
     };
   });
 
   const totals = people.reduce((acc, person) => {
     acc.calls += person.calls;
+    acc.completedCalls += person.completedCalls;
+    acc.inProgressCalls += person.inProgressCalls;
     acc.connected += person.connected;
     acc.noAnswer += person.noAnswer;
     acc.infoRequested += person.infoRequested;
@@ -306,12 +342,15 @@ export async function getManagerDashboard(args: {
     acc.whatsappRequested += person.whatsappRequested;
     acc.whatsappSent += person.whatsappSent;
     acc.booked += person.booked;
+    acc.directBooked += person.directBooked;
     acc.queue += person.queue;
     acc.openTasks += person.openTasks;
     acc.overdueTasks += person.overdueTasks;
     return acc;
   }, {
     calls: 0,
+    completedCalls: 0,
+    inProgressCalls: 0,
     connected: 0,
     noAnswer: 0,
     infoRequested: 0,
@@ -319,6 +358,7 @@ export async function getManagerDashboard(args: {
     whatsappRequested: 0,
     whatsappSent: 0,
     booked: 0,
+    directBooked: 0,
     queue: 0,
     openTasks: 0,
     overdueTasks: 0,
@@ -339,7 +379,7 @@ export async function getManagerDashboard(args: {
         detail: String(person.queue) + " / " + String(supplyConfig.queueTarget) + " offene Calls. Lead Scout bzw. Auto-Nachschub prüfen.",
         href: "/dashboard/research",
       });
-    } else if (person.queue < 5 && ["owner", "admin", "sales", "setter"].includes(person.role)) {
+    } else if (person.isCaller && person.queue < 5) {
       alerts.push({
         tone: "warn",
         title: person.name + " hat fast keine Tages-Queue",
@@ -355,6 +395,33 @@ export async function getManagerDashboard(args: {
         href: "/dashboard/crm",
       });
     }
+  }
+
+  const callersWithoutCalendar = people.filter((person) => person.isCaller && !person.calendarConnected);
+  if (callersWithoutCalendar.length) {
+    alerts.push({
+      tone: "warn",
+      title: callersWithoutCalendar.length === 1 ? "1 Caller ohne Google Kalender" : String(callersWithoutCalendar.length) + " Caller ohne Google Kalender",
+      detail: callersWithoutCalendar.map((person) => person.name).slice(0, 4).join(", ") + ". Termin-Automation ist dort noch nicht vollständig einsatzbereit.",
+      href: "/dashboard/team",
+    });
+  }
+
+  if (researchConfig.enabled && isStale(researchRun?.finishedAt)) {
+    alerts.push({
+      tone: "warn",
+      title: "Lead Scout läuft nicht aktuell",
+      detail: researchRun?.finishedAt ? "Letzter erfolgreicher Lauf liegt über 30 Stunden zurück." : "Automatik ist aktiv, aber es gibt noch keinen erfolgreichen Lauf.",
+      href: "/dashboard/research",
+    });
+  }
+  if (supplyConfig.enabled && isStale(supplyRun?.finishedAt)) {
+    alerts.push({
+      tone: "warn",
+      title: "Auto-Nachschub läuft nicht aktuell",
+      detail: supplyRun?.finishedAt ? "Letzter Supply-Lauf liegt über 30 Stunden zurück." : "Auto-Nachschub ist aktiv, aber es gibt noch keinen erfolgreichen Lauf.",
+      href: "/dashboard/research",
+    });
   }
 
   const techErrors = failedJobs + failedOutreach + failedWhatsapp;
@@ -390,8 +457,8 @@ export async function getManagerDashboard(args: {
     todayStartedAt: dayStart.toISOString(),
     totals: {
       ...totals,
-      contactRate: totals.calls ? Math.round(totals.connected / totals.calls * 100) : 0,
-      bookingRate: totals.connected ? Math.round(totals.booked / totals.connected * 100) : 0,
+      contactRate: totals.completedCalls ? Math.round(totals.connected / totals.completedCalls * 100) : 0,
+      bookingRate: totals.connected ? Math.round(totals.directBooked / totals.connected * 100) : 0,
     },
     people,
     alerts: alerts.slice(0, 8),

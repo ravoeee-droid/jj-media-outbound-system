@@ -12,6 +12,7 @@ import {
 } from "@/lib/calendar-meetings";
 import { calendarConnected } from "@/lib/whatsapp/calendar";
 import { hasPermission } from "@/lib/team";
+import { assertLeadInDailyQueue, recordCallResult } from "@/lib/daily-queue";
 import { apiError, requirePermission } from "@/lib/workspace";
 
 export const runtime = "nodejs";
@@ -20,7 +21,7 @@ export const maxDuration = 60;
 
 const actionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("slots"), leadId: z.string().uuid() }),
-  z.object({ action: z.literal("book"), leadId: z.string().uuid(), start: z.string().datetime() }),
+  z.object({ action: z.literal("book"), leadId: z.string().uuid(), start: z.string().datetime(), source: z.enum(["crm", "daily_queue"]).optional().default("crm") }),
 ]);
 
 async function resolveLeadCalendar(workspace: Awaited<ReturnType<typeof requirePermission>>, leadId: string) {
@@ -111,6 +112,10 @@ export async function POST(request: Request) {
       }, { headers: { "cache-control": "no-store" } });
     }
 
+    if (input.source === "daily_queue") {
+      await assertLeadInDailyQueue(workspace.workspaceId, target.lead.id);
+    }
+
     const booking = await bookMeetingSlot({
       workspaceId: workspace.workspaceId,
       calendarUserId: target.calendarUserId,
@@ -118,6 +123,13 @@ export async function POST(request: Request) {
       leadId: target.lead.id,
       start: input.start,
     });
+    if (input.source === "daily_queue") {
+      await recordCallResult({
+        workspaceId: workspace.workspaceId,
+        userId: workspace.user.id,
+        leadId: target.lead.id,
+      }, "meeting");
+    }
     return Response.json({
       ok: true,
       booking,

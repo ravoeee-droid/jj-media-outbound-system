@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db";
 import { leads, users, workspaceMembers } from "@/db/schema";
-import { assertLeadInDailyQueue, getDailyQueue, recordQueueOutcome } from "@/lib/daily-queue";
+import { assertLeadInDailyQueue, ensureCallStarted, getDailyQueue, recordCallResult, recordQueueOutcome } from "@/lib/daily-queue";
 import { markNoInterest, scheduleCallback, scheduleManualMeeting } from "@/lib/lead-workflow";
 import { hasPermission } from "@/lib/team";
 import { apiError, requirePermission } from "@/lib/workspace";
@@ -11,6 +11,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const actionInput = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("call_started"), leadId: z.string().uuid() }),
   z.object({ action: z.literal("no_answer"), leadId: z.string().uuid() }),
   z.object({ action: z.literal("info_requested"), leadId: z.string().uuid(), email: z.string().trim().email().max(320).optional() }),
   z.object({ action: z.literal("whatsapp_requested"), leadId: z.string().uuid() }),
@@ -113,6 +114,10 @@ export async function POST(request: Request) {
     await assertLeadInDailyQueue(workspace.workspaceId, input.leadId);
     const base = { workspaceId: workspace.workspaceId, userId: workspace.user.id, leadId: input.leadId };
 
+    if (input.action === "call_started") {
+      return Response.json({ ok: true, ...(await ensureCallStarted(base)) });
+    }
+
     if (input.action === "info_requested" && !hasPermission(workspace.role, workspace.permissions, "send_email")) {
       throw new Error("FORBIDDEN");
     }
@@ -120,10 +125,14 @@ export async function POST(request: Request) {
       throw new Error("FORBIDDEN");
     }
     if (input.action === "no_answer" || input.action === "whatsapp_requested") {
-      return Response.json({ lead: await recordQueueOutcome(base, input.action) });
+      const lead = await recordQueueOutcome(base, input.action);
+      await recordCallResult(base, input.action);
+      return Response.json({ lead });
     }
     if (input.action === "info_requested") {
-      return Response.json({ lead: await recordQueueOutcome(base, input.action, { email: input.email }) });
+      const lead = await recordQueueOutcome(base, input.action, { email: input.email });
+      await recordCallResult(base, input.action);
+      return Response.json({ lead });
     }
 
     if (input.action === "callback") {
@@ -131,7 +140,9 @@ export async function POST(request: Request) {
       if (dueAt.getTime() <= Date.now() - 60_000) {
         return Response.json({ error: "Der Rückruf muss in der Zukunft liegen." }, { status: 400 });
       }
-      return Response.json(await scheduleCallback(base, dueAt));
+      const result = await scheduleCallback(base, dueAt);
+      await recordCallResult(base, "callback");
+      return Response.json(result);
     }
 
     if (input.action === "meeting") {
@@ -140,10 +151,14 @@ export async function POST(request: Request) {
       if (scheduledAt.getTime() <= Date.now() - 60_000) {
         return Response.json({ error: "Der Termin muss in der Zukunft liegen." }, { status: 400 });
       }
-      return Response.json(await scheduleManualMeeting(base, scheduledAt));
+      const result = await scheduleManualMeeting(base, scheduledAt);
+      await recordCallResult(base, "meeting");
+      return Response.json(result);
     }
 
-    return Response.json({ lead: await markNoInterest(base) });
+    const lead = await markNoInterest(base);
+    await recordCallResult(base, "no_interest");
+    return Response.json({ lead });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return Response.json({ error: "Call-Ergebnis ist unvollständig.", issues: error.issues }, { status: 400 });

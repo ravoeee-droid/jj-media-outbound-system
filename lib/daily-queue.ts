@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { activities, leads, tasks } from "@/db/schema";
 
@@ -40,6 +40,54 @@ function queueEligibility(workspaceId: string, ownerId: string) {
   )!;
 }
 
+export async function getDailyQueueStatsForOwners(workspaceId: string, ownerIds: string[]) {
+  const unique = [...new Set(ownerIds)].filter(Boolean);
+  if (!unique.length) return [];
+
+  const noAnswerToday = sql`not exists (
+    select 1
+    from ${activities} queue_activity
+    where queue_activity.lead_id = ${leads.id}
+      and queue_activity.type = 'call_no_answer'
+      and queue_activity.created_at >= ${berlinDayStartSql}
+  )`;
+
+  const where = and(
+    eq(leads.workspaceId, workspaceId),
+    inArray(leads.ownerId, unique),
+    eq(leads.contactLocked, false),
+    sql`${leads.phone} <> ''`,
+    sql`${leads.pipelineStage} not in ('won', 'lost')`,
+    or(
+      and(
+        eq(leads.nextAction, "callback"),
+        lte(leads.nextActionAt, new Date()),
+      ),
+      and(
+        or(eq(leads.nextAction, "call"), eq(leads.nextAction, "retry_call")),
+        noAnswerToday,
+      ),
+    ),
+  );
+
+  const rows = await getDb()
+    .select({
+      ownerId: leads.ownerId,
+      total: sql<number>`count(*)::int`,
+      callbacks: sql<number>`count(*) filter (where ${leads.nextAction} = 'callback')::int`,
+      highPriority: sql<number>`count(*) filter (where ${leads.salesPriority} >= 75)::int`,
+    })
+    .from(leads)
+    .where(where)
+    .groupBy(leads.ownerId);
+
+  return rows.flatMap((row) => row.ownerId ? [{
+    ownerId: row.ownerId,
+    total: Number(row.total || 0),
+    callbacks: Number(row.callbacks || 0),
+    highPriority: Number(row.highPriority || 0),
+  }] : []);
+}
 export async function getDailyQueue(workspaceId: string, ownerId: string, limit = 40) {
   const db = getDb();
   const where = queueEligibility(workspaceId, ownerId);
@@ -103,6 +151,88 @@ export async function getDailyQueue(workspaceId: string, ownerId: string, limit 
       highPriority: Number(stats.highPriority || 0),
     },
   };
+}
+
+export type CallResult = "no_answer" | "info_requested" | "whatsapp_requested" | "callback" | "meeting" | "no_interest";
+
+export async function ensureCallStarted(context: QueueContext) {
+  const db = getDb();
+  const since = new Date(Date.now() - 4 * 60 * 60_000);
+  const [latestStarted, latestResult] = await Promise.all([
+    db.select({ id: activities.id, createdAt: activities.createdAt })
+      .from(activities)
+      .where(and(
+        eq(activities.workspaceId, context.workspaceId),
+        eq(activities.leadId, context.leadId),
+        eq(activities.userId, context.userId),
+        eq(activities.type, "call_started"),
+        gte(activities.createdAt, since),
+      ))
+      .orderBy(desc(activities.createdAt))
+      .limit(1),
+    db.select({ createdAt: activities.createdAt })
+      .from(activities)
+      .where(and(
+        eq(activities.workspaceId, context.workspaceId),
+        eq(activities.leadId, context.leadId),
+        eq(activities.userId, context.userId),
+        eq(activities.type, "call_result"),
+        gte(activities.createdAt, since),
+      ))
+      .orderBy(desc(activities.createdAt))
+      .limit(1),
+  ]);
+
+  if (latestStarted && (!latestResult || latestResult.createdAt < latestStarted.createdAt)) {
+    return { created: false, startedAt: latestStarted.createdAt };
+  }
+
+  const [created] = await db.insert(activities).values({
+    workspaceId: context.workspaceId,
+    leadId: context.leadId,
+    userId: context.userId,
+    type: "call_started",
+    title: "Call gestartet",
+    detail: "Anruf aus der Tages-Queue gestartet.",
+    metadata: { source: "daily_queue" },
+  }).returning({ createdAt: activities.createdAt });
+
+  return { created: true, startedAt: created.createdAt };
+}
+
+export async function recordCallResult(context: QueueContext, result: CallResult) {
+  const db = getDb();
+  const session = await ensureCallStarted(context);
+
+  const [existing] = await db
+    .select({ id: activities.id })
+    .from(activities)
+    .where(and(
+      eq(activities.workspaceId, context.workspaceId),
+      eq(activities.leadId, context.leadId),
+      eq(activities.userId, context.userId),
+      eq(activities.type, "call_result"),
+      gte(activities.createdAt, session.startedAt),
+    ))
+    .orderBy(desc(activities.createdAt))
+    .limit(1);
+
+  if (existing) return { created: false };
+
+  await db.insert(activities).values({
+    workspaceId: context.workspaceId,
+    leadId: context.leadId,
+    userId: context.userId,
+    type: "call_result",
+    title: "Call-Ergebnis erfasst",
+    detail: result,
+    metadata: {
+      source: "daily_queue",
+      result,
+      connected: result !== "no_answer",
+    },
+  });
+  return { created: true };
 }
 
 async function getLead(context: QueueContext) {
