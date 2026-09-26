@@ -1,6 +1,7 @@
 import Link from "next/link";
 import AdminShell from "../components/AdminShell";
 import SystemControlPanel from "./SystemControlPanel";
+import SystemReadiness from "../components/SystemReadiness";
 
 export default function SystemPage() {
   return (
@@ -12,6 +13,7 @@ export default function SystemPage() {
       actions={<><Link href="/dashboard/outbound">Outbound öffnen</Link><Link href="/dashboard">Command Center</Link></>}
       wide
     >
+      <SystemReadiness />
       <SystemControlPanel />
     </AdminShell>
   );
