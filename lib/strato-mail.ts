@@ -73,7 +73,12 @@ export function stratoMailStatus() {
 
 export async function getStratoMailStatus(workspaceId: string, accountEmail?: string) {
   const env = stratoMailStatus();
-  if (env.configured) return env;
+  if (env.configured) {
+    return {
+      ...env,
+      accounts: [{ email: env.email, senderName: envText("STRATO_MAIL_NAME") || envText("EMAIL_SENDER_NAME") || "JJ-Media", primary: true }],
+    };
+  }
   const stored = await getStoredStratoCredentials(workspaceId, accountEmail);
   return {
     configured: Boolean(stored?.email && stored?.password),
