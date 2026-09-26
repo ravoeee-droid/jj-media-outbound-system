@@ -1,7 +1,7 @@
-import { and, desc, eq, ilike, isNull, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, isNull, lt, not, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db";
-import { activities, leads, users, workspaceMembers } from "@/db/schema";
+import { activities, leads, tasks, users, whatsappQueue, whatsappThreads, workspaceMembers } from "@/db/schema";
 import { hasPermission } from "@/lib/team";
 import { apiError, requireWorkspace } from "@/lib/workspace";
 
@@ -10,6 +10,18 @@ const scopeSchema = z.string().max(80).default("mine");
 const listLimit = 50;
 
 type Cursor = { updatedAt: string; id: string };
+
+function privateLeadCondition() {
+  return sql<boolean>`(
+    ${leads.tags} @> ${JSON.stringify(["private-contact"])}::jsonb
+    or position('🚫' in ${leads.company}) > 0
+    or position('🚫' in ${leads.contact}) > 0
+    or position('⛔' in ${leads.company}) > 0
+    or position('⛔' in ${leads.contact}) > 0
+    or position('🛑' in ${leads.company}) > 0
+    or position('🛑' in ${leads.contact}) > 0
+  )`;
+}
 
 function encodeCursor(value: Cursor) {
   return Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -41,14 +53,20 @@ export async function GET(request: Request) {
     const scope = canViewAll ? requestedScope : "mine";
 
     const baseConditions = [eq(leads.workspaceId, workspace.workspaceId)];
-    if (scope === "mine") {
-      baseConditions.push(eq(leads.ownerId, workspace.user.id));
-    } else if (scope === "unassigned") {
-      baseConditions.push(isNull(leads.ownerId));
-    } else if (scope !== "all") {
-      const scopedUser = z.string().uuid().safeParse(scope);
-      if (!scopedUser.success) return Response.json({ error: "Ungültiger CRM-Bereich." }, { status: 400 });
-      baseConditions.push(eq(leads.ownerId, scopedUser.data));
+    if (scope === "private") {
+      baseConditions.push(privateLeadCondition());
+    } else {
+      // Private WhatsApp contacts never leak into sales views, queues or KPI counts.
+      baseConditions.push(not(privateLeadCondition()));
+      if (scope === "mine") {
+        baseConditions.push(eq(leads.ownerId, workspace.user.id));
+      } else if (scope === "unassigned") {
+        baseConditions.push(isNull(leads.ownerId));
+      } else if (scope !== "all") {
+        const scopedUser = z.string().uuid().safeParse(scope);
+        if (!scopedUser.success) return Response.json({ error: "Ungültiger CRM-Bereich." }, { status: 400 });
+        baseConditions.push(eq(leads.ownerId, scopedUser.data));
+      }
     }
 
     if (query.length >= 2) {
@@ -90,8 +108,13 @@ export async function GET(request: Request) {
         count: sql<number>`count(*)::int`,
       })
       .from(leads)
-      .where(eq(leads.workspaceId, workspace.workspaceId))
+      .where(and(eq(leads.workspaceId, workspace.workspaceId), not(privateLeadCondition())))
       .groupBy(leads.ownerId);
+
+    const privateCountPromise = db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(leads)
+      .where(and(eq(leads.workspaceId, workspace.workspaceId), privateLeadCondition()));
 
     const rowsPromise = db
       .select({
@@ -113,6 +136,7 @@ export async function GET(request: Request) {
         nextAction: leads.nextAction,
         nextActionAt: leads.nextActionAt,
         contactLocked: leads.contactLocked,
+        privateContact: privateLeadCondition(),
         videoStatus: leads.videoStatus,
         watchPercent: leads.watchPercent,
         salesPriority: leads.salesPriority,
@@ -126,7 +150,7 @@ export async function GET(request: Request) {
       .orderBy(desc(leads.updatedAt), desc(leads.id))
       .limit(listLimit + 1);
 
-    const [memberRows, countRows, rawRows] = await Promise.all([memberPromise, countsPromise, rowsPromise]);
+    const [memberRows, countRows, privateCountRows, rawRows] = await Promise.all([memberPromise, countsPromise, privateCountPromise, rowsPromise]);
 
     const hasMore = rawRows.length > listLimit;
     const rows = hasMore ? rawRows.slice(0, listLimit) : rawRows;
@@ -157,6 +181,7 @@ export async function GET(request: Request) {
       tabs: {
         total,
         unassigned: counts.get("unassigned") ?? 0,
+        private: Number(privateCountRows[0]?.count || 0),
         members: memberRows
           .filter((member) => member.status === "active")
           .map((member) => ({
@@ -181,6 +206,7 @@ const updateInput = z.object({
   email: z.string().max(320).optional(),
   phone: z.string().max(80).optional(),
   whatsappStatus: z.enum(["not_started", "ready", "active", "sent", "replied", "stopped", "failed"]).optional(),
+  privateContact: z.boolean().optional(),
   notes: z.string().max(20000).optional(),
   objection: z.string().max(4000).optional(),
   pitch: z.string().max(10000).optional(),
@@ -198,7 +224,7 @@ export async function PUT(request: Request) {
     const input = updateInput.parse(await request.json());
     const db = getDb();
     const [existing] = await db
-      .select({ id: leads.id, ownerId: leads.ownerId })
+      .select({ id: leads.id, ownerId: leads.ownerId, company: leads.company, contact: leads.contact, tags: leads.tags, contactLocked: leads.contactLocked, contactLockReason: leads.contactLockReason })
       .from(leads)
       .where(and(eq(leads.id, input.id), eq(leads.workspaceId, workspace.workspaceId)))
       .limit(1);
@@ -219,6 +245,13 @@ export async function PUT(request: Request) {
       }
     }
 
+    const privateTags = input.privateContact === undefined
+      ? undefined
+      : input.privateContact
+        ? [...new Set([...existing.tags.filter((tag) => !["wa-hot", "wa-warm", "wa-reactivate", "wa-followup", "wa-customer", "wa-private", "wa-cold", "wa-unknown"].includes(tag)), "wa-private", "private-contact"])]
+        : existing.tags.filter((tag) => !["wa-private", "private-contact"].includes(tag));
+    const canClearPrivateLock = !existing.contactLocked || existing.contactLockReason.startsWith("Privater WhatsApp-Kontakt");
+
     const updates: Partial<typeof leads.$inferInsert> = {
       updatedAt: new Date(),
       ...(input.ownerId !== undefined ? { ownerId: input.ownerId, assignedAt: new Date() } : {}),
@@ -234,6 +267,20 @@ export async function PUT(request: Request) {
       ...(input.dealValue !== undefined ? { dealValue: input.dealValue } : {}),
       ...(input.probability !== undefined ? { probability: input.probability } : {}),
       ...(input.nextFollowUpAt !== undefined ? { nextFollowUpAt: input.nextFollowUpAt ? new Date(input.nextFollowUpAt) : null } : {}),
+      ...(input.privateContact === true ? {
+        tags: privateTags || existing.tags,
+        contactLocked: true,
+        contactLockReason: "Privater WhatsApp-Kontakt",
+        nextAction: "none",
+        nextActionAt: null,
+        nextFollowUpAt: null,
+      } : {}),
+      ...(input.privateContact === false ? {
+        tags: privateTags || existing.tags,
+        company: existing.company.replace(/[🚫⛔🛑]/gu, "").replace(/\s+/g, " ").trim() || existing.company,
+        contact: existing.contact.replace(/[🚫⛔🛑]/gu, "").replace(/\s+/g, " ").trim(),
+        ...(canClearPrivateLock ? { contactLocked: false, contactLockReason: "" } : {}),
+      } : {}),
     };
 
     const [lead] = await db
@@ -243,6 +290,30 @@ export async function PUT(request: Request) {
       .returning();
     if (!lead) return Response.json({ error: "Lead nicht gefunden." }, { status: 404 });
 
+    if (input.privateContact === true) {
+      await db.update(tasks).set({ status: "cancelled", updatedAt: new Date() }).where(and(
+        eq(tasks.workspaceId, workspace.workspaceId),
+        eq(tasks.leadId, lead.id),
+        eq(tasks.status, "open"),
+      ));
+      const privateThreads = await db.select({ id: whatsappThreads.id }).from(whatsappThreads).where(and(
+        eq(whatsappThreads.workspaceId, workspace.workspaceId),
+        eq(whatsappThreads.leadId, lead.id),
+      ));
+      if (privateThreads.length) {
+        const ids = privateThreads.map((row) => row.id);
+        await db.update(whatsappQueue).set({ status: "cancelled", error: "Privater Kontakt", updatedAt: new Date() }).where(and(
+          eq(whatsappQueue.workspaceId, workspace.workspaceId),
+          inArray(whatsappQueue.threadId, ids),
+          inArray(whatsappQueue.status, ["review", "queued"]),
+        ));
+        await db.update(whatsappThreads).set({ mode: "manual", status: "closed", nextFollowUpAt: null, updatedAt: new Date() }).where(and(
+          eq(whatsappThreads.workspaceId, workspace.workspaceId),
+          eq(whatsappThreads.leadId, lead.id),
+        ));
+      }
+    }
+
     const activityRows: Array<typeof activities.$inferInsert> = [];
     if (input.pipelineStage) activityRows.push({
       workspaceId: workspace.workspaceId,
@@ -251,6 +322,14 @@ export async function PUT(request: Request) {
       type: "stage_changed",
       title: `Pipeline: ${input.pipelineStage}`,
       detail: "Status im CRM geändert.",
+    });
+    if (input.privateContact !== undefined) activityRows.push({
+      workspaceId: workspace.workspaceId,
+      leadId: lead.id,
+      userId: workspace.user.id,
+      type: "privacy_changed",
+      title: input.privateContact ? "Kontakt als privat markiert" : "Kontakt als geschäftlich markiert",
+      detail: input.privateContact ? "Aus Sales-CRM, Queue, Follow-ups und Automationen ausgeschlossen." : "Privat-Markierung entfernt.",
     });
     if (input.ownerId !== undefined && input.ownerId !== existing.ownerId) activityRows.push({
       workspaceId: workspace.workspaceId,

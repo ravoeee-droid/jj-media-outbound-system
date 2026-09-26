@@ -86,7 +86,7 @@ export function isBuyingReady(text: string, intent: string, confidence: number) 
 }
 
 export function isSuppressed(tags: string[]) {
-  return tags.some((t) => ["opt-out", "do-not-contact", "gesperrt"].includes(t.toLowerCase()));
+  return tags.some((t) => ["opt-out", "do-not-contact", "gesperrt", "private-contact", "wa-private"].includes(t.toLowerCase()));
 }
 
 // Only an unambiguous choice of a previously offered time authorizes a booking.

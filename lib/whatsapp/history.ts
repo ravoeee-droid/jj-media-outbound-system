@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, gt, inArray, like } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db";
-import { activities, leads, settings, tasks, whatsappMessages, whatsappThreads } from "@/db/schema";
+import { activities, leads, settings, tasks, whatsappMessages, whatsappQueue, whatsappThreads } from "@/db/schema";
 import { localClock } from "./calendar";
 import { getAgentConfig } from "./config";
 import { effectiveMode, isOptOut, isSuppressed, normalizePhone } from "./policy";
@@ -105,6 +105,10 @@ function replaceClassTags(tags: string[], next: string) {
 
 function cleanName(value: string) {
   return value.replace(/[\u0000-\u001f<>]/g, " ").replace(/\s+/g, " ").trim().slice(0, 160);
+}
+
+function hasPrivateMarker(value: string) {
+  return /[🚫⛔🛑]/u.test(value);
 }
 
 function messageFallback(kind: HistoryMessage["kind"], body: string) {
@@ -228,19 +232,44 @@ export async function ingestHistoryBatch(workspaceId: string, rawItems: unknown[
     contacts += 1;
     const [freshLead] = await db.select().from(leads).where(and(eq(leads.workspaceId, workspaceId), eq(leads.id, record.lead.id))).limit(1);
     if (!freshLead) continue;
+    const markedPrivate = hasPrivateMarker(bestName) || freshLead.tags.includes("private-contact");
     let tags = uniqueTags([...freshLead.tags, "whatsapp-history", "history-dirty"]);
     if (foundOptOut) tags = uniqueTags([...tags, "opt-out"]);
+    if (markedPrivate) {
+      tags = replaceClassTags(tags.filter((tag) => !["history-dirty", "history-analysis-pending", "reactivation-ready"].includes(tag)), "wa-private");
+      tags = uniqueTags([...tags, "private-contact", "history-analyzed"]);
+    }
     await db.update(leads).set({
       tags,
       lastActivityAt: threadLatest,
       ...(latestOutgoing ? { lastContactAt: latestOutgoing } : {}),
+      ...(markedPrivate ? {
+        contactLocked: true,
+        contactLockReason: "Privater WhatsApp-Kontakt (Stop-Markierung)",
+        nextAction: "none",
+        nextActionAt: null,
+        nextFollowUpAt: null,
+      } : {}),
       updatedAt: new Date(),
     }).where(and(eq(leads.workspaceId, workspaceId), eq(leads.id, freshLead.id)));
     await db.update(whatsappThreads).set({
       lastMessageAt: threadLatest,
       ...(foundOptOut ? { consent: "revoked", consentNote: "Opt-out in importierter WhatsApp-Historie erkannt", status: "closed", mode: "manual" as const } : {}),
+      ...(markedPrivate ? { status: "closed", mode: "manual" as const, nextFollowUpAt: null } : {}),
       updatedAt: new Date(),
     }).where(and(eq(whatsappThreads.workspaceId, workspaceId), eq(whatsappThreads.id, record.thread.id)));
+    if (markedPrivate) {
+      await db.update(tasks).set({ status: "cancelled", updatedAt: new Date() }).where(and(
+        eq(tasks.workspaceId, workspaceId),
+        eq(tasks.leadId, freshLead.id),
+        eq(tasks.status, "open"),
+      ));
+      await db.update(whatsappQueue).set({ status: "cancelled", error: "Privater Kontakt", updatedAt: new Date() }).where(and(
+        eq(whatsappQueue.workspaceId, workspaceId),
+        eq(whatsappQueue.threadId, record.thread.id),
+        inArray(whatsappQueue.status, ["review", "queued"]),
+      ));
+    }
   }
 
   const previous = await historyStatus(workspaceId);
@@ -259,6 +288,64 @@ async function historyStatus(workspaceId: string) {
   const [row] = await getDb().select({ value: settings.value }).from(settings).where(and(eq(settings.workspaceId, workspaceId), eq(settings.key, HISTORY_STATUS_KEY))).limit(1);
   if (!row) return {} as Record<string, unknown>;
   try { return JSON.parse(row.value) as Record<string, unknown>; } catch { return {} as Record<string, unknown>; }
+}
+
+async function applyPrivateMarkers(workspaceId: string) {
+  const db = getDb();
+  const rows = await db.select({ thread: whatsappThreads, lead: leads }).from(whatsappThreads)
+    .innerJoin(leads, and(eq(leads.workspaceId, whatsappThreads.workspaceId), eq(leads.id, whatsappThreads.leadId)))
+    .where(eq(whatsappThreads.workspaceId, workspaceId))
+    .orderBy(desc(whatsappThreads.updatedAt))
+    .limit(1_000);
+
+  let moved = 0;
+  for (const { thread, lead } of rows) {
+    if (lead.tags.includes("private-contact")) continue;
+    if (!hasPrivateMarker(lead.company) && !hasPrivateMarker(lead.contact)) continue;
+
+    let tags = lead.tags.filter((tag) => !["history-dirty", "history-analysis-pending", "history-analysis-error", "reactivation-ready"].includes(tag));
+    tags = replaceClassTags(tags, "wa-private");
+    tags = uniqueTags([...tags, "private-contact", "history-analyzed"]);
+
+    await db.update(leads).set({
+      tags,
+      contactLocked: true,
+      contactLockReason: "Privater WhatsApp-Kontakt (Stop-Markierung)",
+      nextAction: "none",
+      nextActionAt: null,
+      nextFollowUpAt: null,
+      updatedAt: new Date(),
+    }).where(and(eq(leads.workspaceId, workspaceId), eq(leads.id, lead.id)));
+
+    await db.update(whatsappThreads).set({
+      mode: "manual",
+      status: "closed",
+      nextFollowUpAt: null,
+      updatedAt: new Date(),
+    }).where(and(eq(whatsappThreads.workspaceId, workspaceId), eq(whatsappThreads.id, thread.id)));
+
+    await db.update(tasks).set({ status: "cancelled", updatedAt: new Date() }).where(and(
+      eq(tasks.workspaceId, workspaceId),
+      eq(tasks.leadId, lead.id),
+      eq(tasks.status, "open"),
+    ));
+    await db.update(whatsappQueue).set({ status: "cancelled", error: "Privater Kontakt", updatedAt: new Date() }).where(and(
+      eq(whatsappQueue.workspaceId, workspaceId),
+      eq(whatsappQueue.threadId, thread.id),
+      inArray(whatsappQueue.status, ["review", "queued"]),
+    ));
+
+    await db.insert(activities).values({
+      workspaceId,
+      leadId: lead.id,
+      type: "whatsapp",
+      title: "Privater WhatsApp-Kontakt erkannt",
+      detail: "Stop-Markierung im WhatsApp-Kontaktnamen erkannt. Aus Sales-Automationen ausgeschlossen.",
+      metadata: { automatic: true, marker: true },
+    });
+    moved += 1;
+  }
+  return { moved };
 }
 
 async function transcript(workspaceId: string, threadId: string) {
@@ -369,7 +456,8 @@ async function applyCompletedAnalyses(workspaceId: string) {
       tags = uniqueTags([...tags, "history-analyzed", ...(analysis.shouldContact ? ["reactivation-ready"] : [])]);
       if (!analysis.shouldContact) tags = tags.filter((tag) => tag !== "reactivation-ready");
       if (analysis.classification === "cold") tags = uniqueTags([...tags, "do-not-auto-reactivate"]);
-      if (analysis.classification === "private") tags = uniqueTags([...tags, "private-contact"]);
+      const isPrivate = analysis.classification === "private";
+      if (isPrivate) tags = uniqueTags([...tags, "private-contact"]);
 
       const note = `[WhatsApp Lead Radar ${new Date().toISOString().slice(0, 10)}]\nNächster Schritt: ${analysis.nextAction}\nBegründung: ${analysis.reason}`;
       const notes = lead.notes.includes("[WhatsApp Lead Radar") ? lead.notes : `${lead.notes}${lead.notes ? "\n\n" : ""}${note}`;
@@ -379,15 +467,36 @@ async function applyCompletedAnalyses(workspaceId: string) {
         confidence: Math.round(analysis.confidence * 100),
         tags,
         notes,
-        ...(followUpAt ? { nextFollowUpAt: followUpAt } : {}),
+        ...(followUpAt && !isPrivate ? { nextFollowUpAt: followUpAt } : {}),
+        ...(isPrivate ? {
+          contactLocked: true,
+          contactLockReason: "Privater WhatsApp-Kontakt (KI-Klassifikation)",
+          nextAction: "none",
+          nextActionAt: null,
+          nextFollowUpAt: null,
+        } : {}),
         updatedAt: new Date(),
       }).where(and(eq(leads.workspaceId, workspaceId), eq(leads.id, lead.id)));
       await db.update(whatsappThreads).set({
         summary: analysis.summary,
         intent: analysis.classification,
-        ...(followUpAt ? { nextFollowUpAt: followUpAt } : {}),
+        ...(followUpAt && !isPrivate ? { nextFollowUpAt: followUpAt } : {}),
+        ...(isPrivate ? { status: "closed", mode: "manual" as const, nextFollowUpAt: null } : {}),
         updatedAt: new Date(),
       }).where(and(eq(whatsappThreads.workspaceId, workspaceId), eq(whatsappThreads.id, thread.id)));
+
+      if (isPrivate) {
+        await db.update(tasks).set({ status: "cancelled", updatedAt: new Date() }).where(and(
+          eq(tasks.workspaceId, workspaceId),
+          eq(tasks.leadId, lead.id),
+          eq(tasks.status, "open"),
+        ));
+        await db.update(whatsappQueue).set({ status: "cancelled", error: "Privater Kontakt", updatedAt: new Date() }).where(and(
+          eq(whatsappQueue.workspaceId, workspaceId),
+          eq(whatsappQueue.threadId, thread.id),
+          inArray(whatsappQueue.status, ["review", "queued"]),
+        ));
+      }
 
       if (analysis.shouldContact && ["hot", "warm", "reactivate", "follow_up"].includes(analysis.classification)) {
         const taskType = analysis.classification === "hot" ? "whatsapp_hot_lead" : "whatsapp_reactivation";
@@ -492,6 +601,7 @@ async function queueEligibleReactivation(workspaceId: string) {
 }
 
 export async function sweepHistoryIntelligence(workspaceId: string) {
+  const privateMarkers = await applyPrivateMarkers(workspaceId);
   const applied = await applyCompletedAnalyses(workspaceId);
   const analysis = await queueNextAnalysis(workspaceId);
   const reactivation = await queueEligibleReactivation(workspaceId);
@@ -499,9 +609,9 @@ export async function sweepHistoryIntelligence(workspaceId: string) {
   await upsertSetting(workspaceId, HISTORY_STATUS_KEY, {
     ...previous,
     lastSweepAt: new Date().toISOString(),
-    lastSweep: { applied, analysis, reactivation },
+    lastSweep: { privateMarkers, applied, analysis, reactivation },
   });
-  return { applied, analysis, reactivation };
+  return { privateMarkers, applied, analysis, reactivation };
 }
 
 function classificationFromTags(tags: string[]) {
