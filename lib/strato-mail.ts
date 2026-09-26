@@ -530,6 +530,52 @@ async function fetchHeader(client: ImapClient, folder: string, uid: number, view
   };
 }
 
+function splitFetchResponses(response: Buffer) {
+  const text = response.toString("latin1");
+  const starts = [...text.matchAll(/(?:^|\r\n)(\* \d+ FETCH \()/g)].map((match) => {
+    const index = match.index || 0;
+    return text.startsWith("\r\n", index) ? index + 2 : index;
+  });
+  return starts.map((start, index) => {
+    const end = index + 1 < starts.length ? starts[index + 1] : response.length;
+    return response.subarray(start, end);
+  });
+}
+
+function parseBatchHeaderThreads(response: Buffer, folder: string, view: MailView) {
+  const rows: Array<{ uid: number; thread: MailThreadView }> = [];
+  for (const chunk of splitFetchResponses(response)) {
+    const uidMatch = responseText(chunk).match(/\bUID (\d+)\b/i);
+    const uid = Number(uidMatch?.[1] || 0);
+    if (!uid) continue;
+    const literal = extractLiterals(chunk)[0] || Buffer.alloc(0);
+    const headers = parseHeaders(literal);
+    const flags = parseFlags(chunk);
+    const id = encodeMailId(folder, uid);
+    const labels = flags.map((flag) => flag.replace(/^\\/, ""));
+    const from = view === "sent" ? (headers.to || headers.from || "") : (headers.from || "");
+    rows.push({
+      uid,
+      thread: {
+        id,
+        from,
+        to: headers.to || "",
+        subject: headers.subject || "(ohne Betreff)",
+        date: headers.date || "",
+        internalDate: parseInternalDate(chunk),
+        snippet: "",
+        unread: !flags.some((flag) => flag.toLowerCase() === "\\seen"),
+        starred: flags.some((flag) => flag.toLowerCase() === "\\flagged"),
+        draft: flags.some((flag) => flag.toLowerCase() === "\\draft") || view === "drafts",
+        sent: view === "sent",
+        messageCount: 1,
+        labels,
+      },
+    });
+  }
+  return rows;
+}
+
 export async function listStratoMailThreads(options: { view?: MailView; q?: string; maxResults?: number } = {}, workspaceId?: string) {
   const c = await config(workspaceId);
   const client = await ImapClient.open(c);
@@ -540,8 +586,13 @@ export async function listStratoMailThreads(options: { view?: MailView; q?: stri
     await client.execute(`SELECT ${imapQuote(folder)}`);
     const uids = parseUidSearch(await client.execute(`UID SEARCH ${searchCriteria(view, options.q || "")}`));
     const selected = uids.slice(-Math.min(50, Math.max(5, options.maxResults || 30))).reverse();
-    const threads: MailThreadView[] = [];
-    for (const uid of selected) threads.push(await fetchHeader(client, folder, uid, view));
+    let threads: MailThreadView[] = [];
+    if (selected.length) {
+      const response = await client.execute(`UID FETCH ${selected.join(",")} (UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT DATE MESSAGE-ID REFERENCES IN-REPLY-TO)])`);
+      const fetched = parseBatchHeaderThreads(response, folder, view);
+      const byUid = new Map(fetched.map((row) => [row.uid, row.thread]));
+      threads = selected.map((uid) => byUid.get(uid)).filter((thread): thread is MailThreadView => Boolean(thread));
+    }
     return {
       connected: true,
       canManageMail: true,
@@ -784,10 +835,15 @@ export async function listRecentStratoInboxMessages(days = 2, workspaceId?: stri
     const since = new Date(Date.now() - Math.max(1, days) * 24 * 60 * 60 * 1000);
     const uids = parseUidSearch(await client.execute(`UID SEARCH SINCE ${imapDate(since)}`)).slice(-150).reverse();
     const messages: Array<{ messageId: string; references: string; inReplyTo: string; from: string; subject: string; date: string }> = [];
-    for (const uid of uids) {
-      const response = await client.execute(`UID FETCH ${uid} (BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE MESSAGE-ID REFERENCES IN-REPLY-TO)])`);
-      const headers = parseHeaders(extractLiterals(response)[0] || Buffer.alloc(0));
-      messages.push({
+    if (!uids.length) return messages;
+    const response = await client.execute(`UID FETCH ${uids.join(",")} (UID BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE MESSAGE-ID REFERENCES IN-REPLY-TO)])`);
+    const chunks = splitFetchResponses(response);
+    const byUid = new Map<number, { messageId: string; references: string; inReplyTo: string; from: string; subject: string; date: string }>();
+    for (const chunk of chunks) {
+      const uid = Number(responseText(chunk).match(/\bUID (\d+)\b/i)?.[1] || 0);
+      if (!uid) continue;
+      const headers = parseHeaders(extractLiterals(chunk)[0] || Buffer.alloc(0));
+      byUid.set(uid, {
         messageId: headers["message-id"] || "",
         references: headers.references || "",
         inReplyTo: headers["in-reply-to"] || "",
@@ -795,6 +851,10 @@ export async function listRecentStratoInboxMessages(days = 2, workspaceId?: stri
         subject: headers.subject || "",
         date: headers.date || "",
       });
+    }
+    for (const uid of uids) {
+      const message = byUid.get(uid);
+      if (message) messages.push(message);
     }
     return messages;
   } finally { await client.logout(); }
