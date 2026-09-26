@@ -70,7 +70,7 @@ export async function GET(request: Request) {
         subject: row.item.subject,
         body: row.item.body,
         threadId: row.item.providerThreadId,
-      });
+      }, row.item.workspaceId);
       const taskTitle = `Follow-up ${row.item.step - 1}: ${row.lead.company}`;
       await Promise.all([
         db

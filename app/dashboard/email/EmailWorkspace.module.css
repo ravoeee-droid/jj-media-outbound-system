@@ -367,3 +367,14 @@
   .toast { right: 12px; left: 12px; bottom: 12px; text-align: center; }
   .connectCard { min-height: 440px; padding: 35px 20px; border-radius: 17px; }
 }
+
+.setupForm{width:min(560px,100%);display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:8px auto 2px;text-align:left}
+.setupForm label{display:grid;gap:5px}
+.setupForm label:last-of-type{grid-column:1/-1}
+.setupForm span{color:#667085;font-size:9px;font-weight:750}
+.setupForm input{width:100%;height:42px;border:1px solid #dfe4ea;border-radius:11px;background:#fff;padding:0 12px;color:#1f2937;font-size:11px;outline:none}
+.setupForm input:focus{border-color:#aeb7c4;box-shadow:0 0 0 3px rgba(37,99,235,.06)}
+.setupForm button{grid-column:1/-1;min-height:44px;border:0;border-radius:11px;background:#111827;color:#fff;font-size:10px;font-weight:800;cursor:pointer}
+.setupForm button:disabled{opacity:.55;cursor:not-allowed}
+.setupError{width:min(560px,100%);border:1px solid rgba(185,45,38,.14);border-radius:10px;background:#fff4f1;padding:9px 11px;color:#a34a42;font-size:9px;text-align:left}
+@media(max-width:640px){.setupForm{grid-template-columns:1fr}.setupForm label:last-of-type,.setupForm button{grid-column:1}}

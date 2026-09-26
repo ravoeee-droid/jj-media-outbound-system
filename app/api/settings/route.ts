@@ -2,7 +2,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { assets, settings } from "@/db/schema";
 import { defaultSettings } from "@/lib/templates";
-import { stratoMailStatus } from "@/lib/strato-mail";
+import { getStratoMailStatus } from "@/lib/strato-mail";
 import { apiError, requireWorkspace } from "@/lib/workspace";
 
 const allowed = new Set([
@@ -25,13 +25,14 @@ export async function GET() {
   try {
     const workspace = await requireWorkspace();
     const db = getDb();
-    const [rows, masterVideo] = await Promise.all([
+    const [rows, masterVideo, mail] = await Promise.all([
       db.select().from(settings).where(eq(settings.workspaceId, workspace.workspaceId)),
       db.select().from(assets).where(and(eq(assets.workspaceId, workspace.workspaceId), eq(assets.kind, "master_video"))).orderBy(desc(assets.createdAt)).limit(1),
+      getStratoMailStatus(workspace.workspaceId),
     ]);
-    const values = { ...defaultSettings, ...Object.fromEntries(rows.map((row) => [row.key, row.value])) };
-    const mail = stratoMailStatus();
-    return Response.json({
+    const safeRows = rows.filter((row) => row.key !== "strato_mail_credentials_v1");
+    const values = { ...defaultSettings, ...Object.fromEntries(safeRows.map((row) => [row.key, row.value])) };
+     return Response.json({
       settings: values,
       integrations: {
         screenshotOne: true,

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import tls, { type TLSSocket } from "node:tls";
+import { getStoredStratoCredentials } from "@/lib/strato-credentials";
 
 export type MailView = "inbox" | "unread" | "starred" | "sent" | "drafts" | "all" | "trash";
 export type MailThreadAction = "archive" | "read" | "unread" | "star" | "unstar" | "trash" | "untrash" | "spam" | "inbox";
@@ -62,6 +63,7 @@ export function stratoMailStatus() {
   return {
     configured: Boolean(email && password),
     email,
+    source: email && password ? "env" as const : "none" as const,
     imapHost: envText("STRATO_IMAP_HOST") || "imap.strato.de",
     imapPort: Number(envText("STRATO_IMAP_PORT") || 993),
     smtpHost: envText("STRATO_SMTP_HOST") || "smtp.strato.de",
@@ -69,18 +71,51 @@ export function stratoMailStatus() {
   };
 }
 
-function config(): StratoConfig {
-  const status = stratoMailStatus();
-  if (!status.configured) throw new Error("STRATO Mail ist noch nicht eingerichtet. STRATO_MAIL_EMAIL und STRATO_MAIL_PASSWORD fehlen.");
+export async function getStratoMailStatus(workspaceId: string) {
+  const env = stratoMailStatus();
+  if (env.configured) return env;
+  const stored = await getStoredStratoCredentials(workspaceId);
   return {
-    email: status.email,
-    password: process.env.STRATO_MAIL_PASSWORD || "",
-    senderName: envText("STRATO_MAIL_NAME") || envText("EMAIL_SENDER_NAME") || "JJ-Media",
-    imapHost: status.imapHost,
-    imapPort: status.imapPort,
-    smtpHost: status.smtpHost,
-    smtpPort: status.smtpPort,
+    configured: Boolean(stored?.email && stored?.password),
+    email: stored?.email || "",
+    source: stored ? "stored" as const : "none" as const,
+    imapHost: env.imapHost,
+    imapPort: env.imapPort,
+    smtpHost: env.smtpHost,
+    smtpPort: env.smtpPort,
   };
+}
+
+async function config(workspaceId?: string): Promise<StratoConfig> {
+  const env = stratoMailStatus();
+  if (env.configured) {
+    return {
+      email: env.email,
+      password: process.env.STRATO_MAIL_PASSWORD || "",
+      senderName: envText("STRATO_MAIL_NAME") || envText("EMAIL_SENDER_NAME") || "JJ-Media",
+      imapHost: env.imapHost,
+      imapPort: env.imapPort,
+      smtpHost: env.smtpHost,
+      smtpPort: env.smtpPort,
+    };
+  }
+
+  if (workspaceId) {
+    const stored = await getStoredStratoCredentials(workspaceId);
+    if (stored) {
+      return {
+        email: stored.email,
+        password: stored.password,
+        senderName: stored.senderName,
+        imapHost: env.imapHost,
+        imapPort: env.imapPort,
+        smtpHost: env.smtpHost,
+        smtpPort: env.smtpPort,
+      };
+    }
+  }
+
+  throw new Error("STRATO Mail ist noch nicht eingerichtet.");
 }
 
 function timeoutError(label: string) {
@@ -158,8 +193,7 @@ class BufferedTls {
 class ImapClient extends BufferedTls {
   private sequence = 0;
 
-  static async open() {
-    const c = config();
+  static async open(c: StratoConfig) {
     const socket = await tlsSocket(c.imapHost, c.imapPort, "STRATO IMAP");
     const client = new ImapClient(socket);
     const greeting = await client.readLine();
@@ -496,9 +530,9 @@ async function fetchHeader(client: ImapClient, folder: string, uid: number, view
   };
 }
 
-export async function listStratoMailThreads(options: { view?: MailView; q?: string; maxResults?: number } = {}) {
-  const c = config();
-  const client = await ImapClient.open();
+export async function listStratoMailThreads(options: { view?: MailView; q?: string; maxResults?: number } = {}, workspaceId?: string) {
+  const c = await config(workspaceId);
+  const client = await ImapClient.open(c);
   try {
     const folders = await getFolders(client);
     const view = options.view || "inbox";
@@ -520,10 +554,10 @@ export async function listStratoMailThreads(options: { view?: MailView; q?: stri
   } finally { await client.logout(); }
 }
 
-export async function getStratoMailThread(id: string) {
-  const c = config();
+export async function getStratoMailThread(id: string, workspaceId?: string) {
+  const c = await config(workspaceId);
   const { folder, uid } = decodeMailId(id);
-  const client = await ImapClient.open();
+  const client = await ImapClient.open(c);
   try {
     await client.execute(`SELECT ${imapQuote(folder)}`);
     const response = await client.execute(`UID FETCH ${uid} (FLAGS INTERNALDATE BODY.PEEK[])`);
@@ -555,9 +589,10 @@ async function moveMessage(client: ImapClient, uid: number, target: string) {
   await client.execute("EXPUNGE");
 }
 
-export async function modifyStratoMailMessages(ids: string[], action: MailThreadAction) {
+export async function modifyStratoMailMessages(ids: string[], action: MailThreadAction, workspaceId?: string) {
   if (!ids.length) return { changed: 0 };
-  const client = await ImapClient.open();
+  const c = await config(workspaceId);
+  const client = await ImapClient.open(c);
   try {
     const folders = await getFolders(client);
     let changed = 0;
@@ -600,8 +635,7 @@ function normalizeReference(value = "") {
   return clean.startsWith("<") ? clean : `<${clean.replace(/[<>]/g, "")}>`;
 }
 
-function buildRawMessage(args: { to: string; cc?: string; bcc?: string; subject: string; body: string; html?: string; inReplyTo?: string; references?: string }) {
-  const c = config();
+function buildRawMessage(args: { to: string; cc?: string; bcc?: string; subject: string; body: string; html?: string; inReplyTo?: string; references?: string }, c: StratoConfig) {
   const to = safeHeader(args.to);
   const cc = safeHeader(args.cc || "");
   const subject = safeHeader(args.subject);
@@ -642,8 +676,7 @@ function buildRawMessage(args: { to: string; cc?: string; bcc?: string; subject:
 }
 
 class SmtpClient extends BufferedTls {
-  static async open() {
-    const c = config();
+  static async open(c: StratoConfig) {
     const socket = await tlsSocket(c.smtpHost, c.smtpPort, "STRATO SMTP");
     const client = new SmtpClient(socket);
     const greeting = await client.readReply();
@@ -676,9 +709,8 @@ class SmtpClient extends BufferedTls {
     return reply;
   }
 
-  async send(raw: Buffer, recipients: string[]) {
-    const c = config();
-    await this.expect(`MAIL FROM:<${c.email}>`, 250);
+  async send(raw: Buffer, recipients: string[], senderEmail: string) {
+    await this.expect(`MAIL FROM:<${senderEmail}>`, 250);
     for (const recipient of recipients) await this.expect(`RCPT TO:<${recipient}>`, [250, 251]);
     await this.expect("DATA", 354);
     const text = raw.toString("utf8").replace(/(^|\r\n)\./g, "$1..");
@@ -694,8 +726,8 @@ class SmtpClient extends BufferedTls {
   }
 }
 
-async function appendCopy(raw: Buffer, kind: "sent" | "draft") {
-  const client = await ImapClient.open();
+async function appendCopy(raw: Buffer, kind: "sent" | "draft", c: StratoConfig) {
+  const client = await ImapClient.open(c);
   try {
     const folders = await getFolders(client);
     const folder = kind === "sent" ? folders.sent : folders.drafts;
@@ -704,26 +736,28 @@ async function appendCopy(raw: Buffer, kind: "sent" | "draft") {
   } finally { await client.logout(); }
 }
 
-export async function sendStratoMessage(args: { to: string; cc?: string; bcc?: string; subject: string; body: string; html?: string; threadId?: string | null; inReplyTo?: string; references?: string }) {
+export async function sendStratoMessage(args: { to: string; cc?: string; bcc?: string; subject: string; body: string; html?: string; threadId?: string | null; inReplyTo?: string; references?: string }, workspaceId?: string) {
+  const c = await config(workspaceId);
   const reference = args.inReplyTo || args.threadId || "";
-  const { raw, messageId } = buildRawMessage({ ...args, inReplyTo: reference, references: args.references });
+  const { raw, messageId } = buildRawMessage({ ...args, inReplyTo: reference, references: args.references }, c);
   const recipients = [...new Set([...addresses(args.to), ...addresses(args.cc), ...addresses(args.bcc)])];
   if (!recipients.length) throw new Error("Kein gültiger E-Mail-Empfänger gefunden.");
-  const smtp = await SmtpClient.open();
-  try { await smtp.send(raw, recipients); }
+  const smtp = await SmtpClient.open(c);
+  try { await smtp.send(raw, recipients, c.email); }
   finally { await smtp.quit(); }
-  await appendCopy(raw, "sent").catch((error) => console.warn("STRATO Sent-Kopie konnte nicht gespeichert werden", error));
+  await appendCopy(raw, "sent", c).catch((error) => console.warn("STRATO Sent-Kopie konnte nicht gespeichert werden", error));
   return { id: messageId, threadId: messageId };
 }
 
-export async function createStratoDraft(args: { to: string; cc?: string; bcc?: string; subject: string; body: string; threadId?: string | null; inReplyTo?: string; references?: string }) {
-  const { raw, messageId } = buildRawMessage({ ...args, inReplyTo: args.inReplyTo || args.threadId || "", references: args.references });
-  await appendCopy(raw, "draft");
+export async function createStratoDraft(args: { to: string; cc?: string; bcc?: string; subject: string; body: string; threadId?: string | null; inReplyTo?: string; references?: string }, workspaceId?: string) {
+  const c = await config(workspaceId);
+  const { raw, messageId } = buildRawMessage({ ...args, inReplyTo: args.inReplyTo || args.threadId || "", references: args.references }, c);
+  await appendCopy(raw, "draft", c);
   return { id: messageId, threadId: messageId };
 }
 
-export async function sendStratoReply(args: { threadId: string; to: string; subject?: string; body: string }) {
-  const detail = await getStratoMailThread(args.threadId);
+export async function sendStratoReply(args: { threadId: string; to: string; subject?: string; body: string }, workspaceId?: string) {
+  const detail = await getStratoMailThread(args.threadId, workspaceId);
   const message = detail.thread.messages.at(-1);
   if (!message) throw new Error("Die ursprüngliche STRATO-Mail wurde nicht gefunden.");
   const original = args.subject || message.subject || "";
@@ -734,7 +768,7 @@ export async function sendStratoReply(args: { threadId: string; to: string; subj
     body: args.body,
     inReplyTo: message.messageId,
     references: [message.references, message.messageId].filter(Boolean).join(" "),
-  });
+  }, workspaceId);
 }
 
 function imapDate(date: Date) {
@@ -742,9 +776,9 @@ function imapDate(date: Date) {
   return `${String(date.getUTCDate()).padStart(2, "0")}-${months[date.getUTCMonth()]}-${date.getUTCFullYear()}`;
 }
 
-export async function listRecentStratoInboxMessages(days = 2) {
-  config();
-  const client = await ImapClient.open();
+export async function listRecentStratoInboxMessages(days = 2, workspaceId?: string) {
+  const c = await config(workspaceId);
+  const client = await ImapClient.open(c);
   try {
     await client.execute('SELECT "INBOX"');
     const since = new Date(Date.now() - Math.max(1, days) * 24 * 60 * 60 * 1000);
@@ -764,4 +798,23 @@ export async function listRecentStratoInboxMessages(days = 2) {
     }
     return messages;
   } finally { await client.logout(); }
+}
+
+export async function testStratoCredentials(input: { email: string; password: string; senderName?: string }) {
+  const base = stratoMailStatus();
+  const c: StratoConfig = {
+    email: input.email.trim().toLowerCase(),
+    password: input.password,
+    senderName: input.senderName?.trim() || "JJ-Media",
+    imapHost: base.imapHost,
+    imapPort: base.imapPort,
+    smtpHost: base.smtpHost,
+    smtpPort: base.smtpPort,
+  };
+
+  const imap = await ImapClient.open(c);
+  await imap.logout();
+  const smtp = await SmtpClient.open(c);
+  await smtp.quit();
+  return { ok: true, email: c.email, imapHost: c.imapHost, smtpHost: c.smtpHost };
 }

@@ -14,7 +14,7 @@ import {
   workspaceMembers,
 } from "@/db/schema";
 import { getDailyQueueStatsForOwners } from "@/lib/daily-queue";
-import { stratoMailStatus, listRecentStratoInboxMessages } from "@/lib/strato-mail";
+import { getStratoMailStatus, listRecentStratoInboxMessages } from "@/lib/strato-mail";
 import { verifyVideoRenderer } from "@/lib/video-renderer";
 import { getBridgeStatus } from "@/lib/whatsapp/worker-status";
 import { getAgentConfig } from "@/lib/whatsapp/config";
@@ -194,7 +194,7 @@ export async function getSystemReadiness(workspaceId: string, deep = false) {
   const whatsappAgent = await getAgentConfig(workspaceId).catch(() => null);
   const whatsappEnabled = Boolean(whatsappAgent?.enabled || whatsappAgent?.dailyOutreachEnabled);
 
-  const mail = stratoMailStatus();
+  const mail = await getStratoMailStatus(workspaceId);
   let mailLiveOk: boolean | null = null;
   let mailLiveDetail = "";
   let rendererOk: boolean | null = null;
@@ -202,7 +202,7 @@ export async function getSystemReadiness(workspaceId: string, deep = false) {
 
   if (deep) {
     const probes = await Promise.allSettled([
-      mail.configured ? listRecentStratoInboxMessages(1) : Promise.reject(new Error("STRATO Mail nicht konfiguriert")),
+      mail.configured ? listRecentStratoInboxMessages(1, workspaceId) : Promise.reject(new Error("STRATO Mail nicht konfiguriert")),
       verifyVideoRenderer(),
     ]);
     const mailProbe = probes[0];
@@ -242,7 +242,7 @@ export async function getSystemReadiness(workspaceId: string, deep = false) {
       label: "STRATO Mail",
       detail: deep
         ? mailLiveDetail || (mail.configured ? "Konfiguriert." : "Zugangsdaten fehlen.")
-        : mail.configured ? mail.email + " ist konfiguriert." : "STRATO_MAIL_EMAIL / STRATO_MAIL_PASSWORD fehlen.",
+        : mail.configured ? mail.email + " ist konfiguriert." : "STRATO Mail ist noch nicht verbunden.",
       actionHref: "/dashboard/email",
     },
     {

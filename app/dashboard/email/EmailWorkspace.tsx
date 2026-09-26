@@ -51,6 +51,10 @@ export default function EmailWorkspace() {
   const [composerOpen, setComposerOpen] = useState(false);
   const [composer, setComposer] = useState<Composer>(emptyComposer);
   const [reply, setReply] = useState("");
+  const [setupEmail, setSetupEmail] = useState("");
+  const [setupPassword, setSetupPassword] = useState("");
+  const [setupName, setSetupName] = useState("JJ-Media");
+  const [setupBusy, setSetupBusy] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
 
   const notify = useCallback((message: string) => { setToast(message); window.setTimeout(() => setToast(""), 2600); }, []);
@@ -67,6 +71,7 @@ export default function EmailWorkspace() {
       setConnected(Boolean(payload.connected));
       setThreads(payload.threads || []);
       setProfile(payload.profile || null);
+      if (payload.profile?.emailAddress && !setupEmail) setSetupEmail(payload.profile.emailAddress);
       setSelectedIds([]);
     } catch (err) { setError(err instanceof Error ? err.message : "STRATO Postfach konnte nicht geladen werden."); }
     finally { if (!quiet) setLoading(false); }
@@ -134,6 +139,34 @@ export default function EmailWorkspace() {
     finally { setBusy(false); }
   }
 
+  async function connectStrato(event: FormEvent) {
+    event.preventDefault();
+    if (setupBusy || !setupEmail.trim() || !setupPassword) return;
+    setSetupBusy(true);
+    setError("");
+    try {
+      const response = await fetch("/api/email/setup", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "save",
+          email: setupEmail.trim(),
+          password: setupPassword,
+          senderName: setupName.trim() || "JJ-Media",
+        }),
+      });
+      const payload = await response.json() as { error?: string; email?: string };
+      if (!response.ok) throw new Error(payload.error || "STRATO konnte nicht verbunden werden.");
+      setSetupPassword("");
+      notify("STRATO erfolgreich verbunden.");
+      await loadList("inbox", "");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "STRATO konnte nicht verbunden werden.");
+    } finally {
+      setSetupBusy(false);
+    }
+  }
+
   async function sendReply(event: FormEvent) {
     event.preventDefault(); if (!detail || !reply.trim() || busy) return;
     const own = profile?.emailAddress?.toLowerCase() || "";
@@ -152,10 +185,19 @@ export default function EmailWorkspace() {
 
   if (!loading && connected === false) return (
     <section className={styles.connectCard}>
-      <div className={styles.connectIcon}>@</div><p className={styles.kicker}>STRATO Mail</p><h2>Dein STRATO-Postfach direkt im Growth OS.</h2>
-      <p>Für den Live-Zugriff fehlen nur die serverseitigen Zugangsdaten. Danach funktionieren Posteingang, Suche, Antworten, Senden, Entwürfe, Markierungen und Ordner direkt hier.</p>
-      <div className={styles.shortcutCard}><span>✓</span><div><strong>Server sind bereits vorkonfiguriert</strong><small>IMAP 993 · SMTP 465 · SSL/TLS</small></div></div>
-      <small>In Vercel einmal <strong>STRATO_MAIL_EMAIL</strong> und <strong>STRATO_MAIL_PASSWORD</strong> hinterlegen. Das Passwort gehört nicht in den Browser oder in GitHub.</small>
+      <div className={styles.connectIcon}>@</div>
+      <p className={styles.kicker}>STRATO Mail</p>
+      <h2>STRATO einmal verbinden. Danach läuft alles direkt im Growth OS.</h2>
+      <p>Posteingang, Suche, Antworten, Senden, Entwürfe und Follow-ups verwenden danach dieses Postfach. Der Server testet IMAP und SMTP vor dem Speichern.</p>
+      <form className={styles.setupForm} onSubmit={connectStrato}>
+        <label><span>E-Mail-Adresse</span><input type="email" value={setupEmail} onChange={(event) => setSetupEmail(event.target.value)} autoComplete="username" placeholder="mail@deine-domain.de" required /></label>
+        <label><span>Passwort</span><input type="password" value={setupPassword} onChange={(event) => setSetupPassword(event.target.value)} autoComplete="current-password" placeholder="STRATO Passwort" required /></label>
+        <label><span>Absendername</span><input value={setupName} onChange={(event) => setSetupName(event.target.value)} maxLength={120} /></label>
+        <button type="submit" disabled={setupBusy}>{setupBusy ? "Prüft IMAP + SMTP …" : "STRATO verbinden"}</button>
+      </form>
+      {error && <div className={styles.setupError}>{error}</div>}
+      <div className={styles.shortcutCard}><span>✓</span><div><strong>Zugang wird verschlüsselt gespeichert</strong><small>IMAP 993 · SMTP 465 · SSL/TLS · Passwort nie im GitHub-Repo</small></div></div>
+      <small>Bestehende Vercel-Secrets funktionieren weiterhin als Fallback und haben Vorrang.</small>
     </section>
   );
 

@@ -108,7 +108,7 @@ export async function POST(request: Request) {
         body,
         html,
         threadId: previous?.providerThreadId,
-      });
+      }, workspace.workspaceId);
       providerMessageId = message.id;
       providerThreadId = message.threadId;
     }
