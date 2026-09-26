@@ -9,9 +9,15 @@ import styles from "./LeadLanding.module.css";
 type LeadLandingProps = { company: string; slug: string; initialVideoUrl?: string | null };
 
 const steps = [
-  { number: "01", title: "Profil auf den Punkt bringen", text: "In wenigen Sekunden muss klar werden, für wen Ihr Angebot gedacht ist und warum man Ihnen folgen sollte." },
-  { number: "02", title: "Content mit Wiedererkennung", text: "Starke Formate verbinden Persönlichkeit, Nutzen und visuelle Klarheit statt austauschbarer Einzelposts." },
-  { number: "03", title: "Reichweite in Anfragen verwandeln", text: "Klare Handlungsaufforderungen und ein einfacher Funnel führen Interessenten vom Profil zum qualifizierten Gespräch." },
+  { number: "01", title: "Profil schärfen", text: "In Sekunden muss klar werden, für wen Ihr Angebot gedacht ist und warum man Ihnen vertrauen sollte." },
+  { number: "02", title: "Content mit Wiedererkennung", text: "Formate, die Persönlichkeit, Nutzen und einen klaren roten Faden verbinden." },
+  { number: "03", title: "Reichweite in Gespräche verwandeln", text: "Klare nächste Schritte führen Interessenten vom Profil direkt in ein qualifiziertes Gespräch." },
+];
+
+const outcomes = [
+  "3 konkrete Hebel statt allgemeiner Agentur-Tipps",
+  "Persönliche Analyse auf Basis Ihres aktuellen Auftritts",
+  "Direkter nächster Schritt ohne langen Verkaufsprozess",
 ];
 
 export default function LeadLanding({ company, slug, initialVideoUrl = null }: LeadLandingProps) {
@@ -81,6 +87,15 @@ export default function LeadLanding({ company, slug, initialVideoUrl = null }: L
     }).catch(() => undefined);
   }
 
+  function trackCta() {
+    fetch("/api/events", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ slug, company, type: "cta_click", visitorId: visitorId() }),
+    }).catch(() => undefined);
+    document.getElementById("termin")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   return (
     <main className="lead-page" data-lead={slug} data-view-tracked={viewTracked}>
       <header className="lead-header">
@@ -92,6 +107,13 @@ export default function LeadLanding({ company, slug, initialVideoUrl = null }: L
         <div className="personal-label">
           <span className="personal-label__bars" aria-hidden="true"><i /><i /><i /></span>
           Persönliche Social-Media-Analyse für <strong>{shortCompany}</strong>
+        </div>
+
+        <div className="lead-hero-copy">
+          <span>Nur für {shortCompany}</span>
+          <h1>Ich habe Ihren Auftritt geprüft – hier sind die <em>3 stärksten Hebel</em>, die ich zuerst angehen würde.</h1>
+          <p>Kurzes persönliches Video. Konkrete Beobachtungen. Wenn es relevant ist, können Sie direkt daneben einen 15-Minuten-Termin wählen.</p>
+          <div className="lead-proof-row"><span>✓ Persönlich vorbereitet</span><span>✓ Kein Pitch-Marathon</span><span>✓ 15 Minuten</span></div>
         </div>
 
         <div className="lead-grid">
@@ -117,23 +139,29 @@ export default function LeadLanding({ company, slug, initialVideoUrl = null }: L
                 </div>
               </div>
             )}
-            <h1 style={{ "--landing-accent": studioConfig.accentColor } as React.CSSProperties}>
+            <div className="video-conversion-strip">
+              <div><small>PERSONALISIERT</small><strong>{shortCompany}</strong></div>
+              <button type="button" onClick={trackCta}>Termin auswählen →</button>
+            </div>
+            <h2 className="landing-video-headline" style={{ "--landing-accent": studioConfig.accentColor } as React.CSSProperties}>
               {studioConfig.headline.split("{{unternehmen}}").map((part, index, parts) => (
                 <span className="headline-fragment" key={`${part}-${index}`}>
                   {part}{index < parts.length - 1 && <em>{shortCompany}</em>}
                 </span>
               ))}
-            </h1>
+            </h2>
             <p className="lead-subtitle">{studioConfig.subtitle}</p>
+            <div className="landing-outcomes">{outcomes.map((item) => <span key={item}>✓ {item}</span>)}</div>
           </div>
 
-          <aside className="calendar-card">
+          <aside className="calendar-card" id="termin">
             {calendarEmbedUrl ? (
               <div className="calendar-embed-wrap">
                 <div className="calendar-card__heading">
                   <span className="calendar-card__accent" />
-                  <h2>Wann passt es Ihnen?</h2>
-                  <p>Wählen Sie direkt einen freien Termin.</p>
+                  <small className="calendar-eyebrow">NÄCHSTER SCHRITT</small>
+                  <h2>Wenn die Analyse relevant ist: Wann passen 15 Minuten?</h2>
+                  <p>Kein Vorbereitungstermin, kein Verpflichtungsgefühl – wir schauen nur, ob und wie sich die Hebel sinnvoll umsetzen lassen.</p>
                 </div>
                 <iframe src={calendarEmbedUrl} title="Termin buchen" loading="lazy" />
                 <div className="calendar-trust"><span className="shield-icon">✓</span>Unverbindlich <i /> 15 Minuten <i /> Klarer nächster Schritt</div>
@@ -152,8 +180,8 @@ export default function LeadLanding({ company, slug, initialVideoUrl = null }: L
 
       <section className="lead-levers">
         <div className="lead-levers__heading">
-          <p className="eyebrow eyebrow--orange">So sieht der Weg aus</p>
-          <h2>Kein Agentur-Blabla. Ein nachvollziehbarer Prozess.</h2>
+          <p className="eyebrow eyebrow--orange">Was Sie aus dem Video mitnehmen</p>
+          <h2>Drei konkrete Hebel, die Sie intern sofort prüfen können – auch ohne Zusammenarbeit mit uns.</h2>
         </div>
         <div className="lever-grid">
           {steps.map((step) => (
@@ -161,6 +189,13 @@ export default function LeadLanding({ company, slug, initialVideoUrl = null }: L
           ))}
         </div>
       </section>
+
+      <section className="lead-final-cta">
+        <div><small>PERSÖNLICH FÜR {shortCompany.toUpperCase()}</small><h2>Wenn mindestens ein Hebel relevant war, klären wir den sinnvollsten nächsten Schritt in 15 Minuten.</h2><p>Kein langer Pitch. Wir schauen gemeinsam auf Ausgangslage, Priorität und Umsetzbarkeit.</p></div>
+        <button type="button" onClick={trackCta}>Freien Termin auswählen →</button>
+      </section>
+
+      <button className="lead-mobile-cta" type="button" onClick={trackCta}>15-Minuten-Termin wählen →</button>
     </main>
   );
 }
