@@ -10,7 +10,7 @@ type Lead = { id: string; company: string; contact: string; phone: string; pipel
 type Thread = { id: string; leadId: string; phone: string; mode: AgentMode; consent: string; consentNote: string; consentAt: string | null; status: string; handoffReason: string; summary: string; intent: string; unread: boolean; version: number; lastMessageAt: string | null; lastInboundId: string | null; offeredSlots: CalendarSlot[]; nextFollowUpAt: string | null };
 type Message = { id: string; direction: string; body: string; status: string; kind: string; createdAt: string; idempotencyKey: string; metadata: { actor?: string; reason?: string; handoff?: boolean; confidence?: number; usedKnowledge?: { id: string; title: string }[]; error?: string; attachmentId?: string } };
 type QueueItem = { id: string; threadId: string; status: string; error: string; messageId: string | null; body: string | null; sentAt: string | null; createdAt: string };
-type Data = { config: AgentConfig; threads: { thread: Thread; lead: Lead }[]; leads: Lead[]; queue: QueueItem[]; connection: { configured: boolean; connected: boolean; message: string; phone: string; qr: string }; calendar: boolean; googleConfigured: boolean; secureAccess: boolean; lastTick: string | null; sentToday: number; workspaceId: string };
+type Data = { config: AgentConfig; threads: { thread: Thread; lead: Lead }[]; leads: Lead[]; queue: QueueItem[]; connection: { configured: boolean; connected: boolean; message: string; phone: string; qr: string; aiReady?: boolean; aiModel?: string; aiMessage?: string }; calendar: boolean; googleConfigured: boolean; secureAccess: boolean; lastTick: string | null; sentToday: number; workspaceId: string };
 type Detail = { thread: Thread; lead: Lead; messages: Message[]; reservations: { id: string; status: string; startAt: string; joinUrl: string }[] };
 type TestLine = { role: "user" | "assistant"; content: string; reason?: string; handoff?: boolean; sources?: { id: string; title: string }[] };
 type ActionResult = { thread?: Thread; message?: Message | string; slots?: CalendarSlot[]; confirmation?: string; booking?: { eventId: string }; error?: string };
@@ -129,7 +129,14 @@ export default function WhatsAppWorkspace() {
     return () => window.clearTimeout(timer);
   }, [search]);
 
-  function changeConfig(patch: Partial<AgentConfig>) { dirtyRef.current = true; setDirty(true); setConfig((current) => ({ ...current, ...patch })); }
+  function startLocalAi() {
+    setNotice("Lokale KI wird auf diesem Windows-PC gestartet …");
+    window.location.href = "jjmedia-whatsapp://start";
+    window.setTimeout(() => { void refresh().catch(() => undefined); }, 4_000);
+    window.setTimeout(() => { void refresh().catch(() => undefined); }, 9_000);
+  }
+
+    function changeConfig(patch: Partial<AgentConfig>) { dirtyRef.current = true; setDirty(true); setConfig((current) => ({ ...current, ...patch })); }
   async function saveConfig(next = config) {
     setBusy("save"); setError(""); setNotice("");
     try {
@@ -228,6 +235,9 @@ export default function WhatsAppWorkspace() {
     <div className={styles.connectionBar}>
       <span className={`${styles.dot} ${data?.connection.connected ? styles.connected : ""}`} /><strong>{data?.connection.message || "Verbindung wird geprüft …"}</strong>
       <span className={styles.spacer} />
+      <span>{data?.connection.aiReady ? (data.connection.aiMessage || "Lokale KI bereit") : "Lokale KI aus"}</span>
+      {!data?.connection.aiReady && <button className={styles.primary} type="button" onClick={startLocalAi}>Lokale KI starten</button>}
+      {data?.connection.aiReady && <span className={styles.badge}>✓ {data.connection.aiModel || "Lokal"}</span>}
       <span>{config.enabled ? modeLabels[config.defaultMode] : "KI pausiert"}</span>
       <button className={styles.textButton} onClick={() => setTab("connection")}>Verbindungen</button>
     </div>
