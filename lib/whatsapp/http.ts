@@ -21,3 +21,18 @@ export async function limitedJson(request: Request, limit = 150_000) {
   if (body.length > limit) throw new Error("Die Anfrage ist zu groß.");
   return JSON.parse(body);
 }
+
+// A tick can wait on the local WhatsApp laptop's AI job (bounded at 44s) plus several
+// DB round trips. Under real-world latency that can still creep past the route's
+// maxDuration, which Vercel then kills with an opaque platform timeout instead of a
+// clean, catchable error. This bails out with time to spare so the worker gets a
+// normal JSON response and retries on its own next poll instead of hanging.
+export async function withWorkerDeadline<T>(work: () => Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} hat zu lange gebraucht.`)), ms);
+    work().then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error) => { clearTimeout(timer); reject(error); },
+    );
+  });
+}

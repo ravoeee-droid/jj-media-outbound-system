@@ -4,7 +4,7 @@ import { z } from "zod";
 import { getDb } from "@/db";
 import { activities, assets, leads, settings, whatsappMessages, whatsappQueue, whatsappThreads } from "@/db/schema";
 import { getAgentConfig } from "@/lib/whatsapp/config";
-import { limitedJson, whatsappError, whatsappWorkspace } from "@/lib/whatsapp/http";
+import { limitedJson, whatsappError, whatsappWorkspace, withWorkerDeadline } from "@/lib/whatsapp/http";
 import { effectiveMode, isSuppressed } from "@/lib/whatsapp/policy";
 import { receiveMessage, receiveReceipt, runWhatsappTick } from "@/lib/whatsapp/service";
 
@@ -188,7 +188,7 @@ export async function POST(request: Request) {
       await getDb().insert(settings).values({ workspaceId, key: STATUS_KEY, value }).onConflictDoUpdate({ target: [settings.workspaceId, settings.key], set: { value, updatedAt: new Date() } });
       return Response.json({ ok: true });
     }
-    if (input.action === "tick") return Response.json(await runWhatsappTick(workspaceId));
+    if (input.action === "tick") return Response.json(await withWorkerDeadline(() => runWhatsappTick(workspaceId), 100_000, "WhatsApp-Tick"));
     if (input.action === "pull") return Response.json(await pull(workspaceId, input.workerId));
     if (input.action === "ai_pull") return Response.json(await pullAiJob(workspaceId, input.workerId));
     if (input.action === "ai_result") return Response.json(await finishAiJob(workspaceId, input));

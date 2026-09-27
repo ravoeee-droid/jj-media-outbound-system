@@ -128,6 +128,21 @@ function timeoutError(label: string) {
   return new Error(`${label} hat zu lange gebraucht.`);
 }
 
+// The hand-rolled IMAP client only resets its idle timer per received chunk, so a
+// STRATO server that dribbles data slowly (or hangs mid-command) can keep a call
+// alive well past the route's maxDuration, which Vercel then kills with an opaque
+// platform timeout instead of a clean, catchable error. Every network round trip to
+// STRATO is wrapped in one of these to fail gracefully with time to spare instead.
+function withDeadline<T>(work: () => Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(timeoutError(label)), ms);
+    work().then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error) => { clearTimeout(timer); reject(error); },
+    );
+  });
+}
+
 function tlsSocket(host: string, port: number, label: string) {
   return new Promise<TLSSocket>((resolve, reject) => {
     const socket = tls.connect({ host, port, servername: host, rejectUnauthorized: true });
@@ -585,6 +600,10 @@ function parseBatchHeaderThreads(response: Buffer, folder: string, view: MailVie
 }
 
 export async function listStratoMailThreads(options: { view?: MailView; q?: string; maxResults?: number } = {}, workspaceId?: string, accountEmail?: string) {
+  return withDeadline(() => listStratoMailThreadsInner(options, workspaceId, accountEmail), 45_000, "STRATO Mail (Posteingang laden)");
+}
+
+async function listStratoMailThreadsInner(options: { view?: MailView; q?: string; maxResults?: number }, workspaceId?: string, accountEmail?: string) {
   const c = await config(workspaceId, accountEmail);
   const client = await ImapClient.open(c);
   try {
@@ -618,6 +637,10 @@ export async function listStratoMailThreads(options: { view?: MailView; q?: stri
 }
 
 export async function getStratoMailThread(id: string, workspaceId?: string, accountEmail?: string) {
+  return withDeadline(() => getStratoMailThreadInner(id, workspaceId, accountEmail), 45_000, "STRATO Mail (Nachricht laden)");
+}
+
+async function getStratoMailThreadInner(id: string, workspaceId?: string, accountEmail?: string) {
   const c = await config(workspaceId, accountEmail);
   const { folder, uid } = decodeMailId(id);
   const client = await ImapClient.open(c);
@@ -654,6 +677,10 @@ async function moveMessage(client: ImapClient, uid: number, target: string) {
 
 export async function modifyStratoMailMessages(ids: string[], action: MailThreadAction, workspaceId?: string, accountEmail?: string) {
   if (!ids.length) return { changed: 0 };
+  return withDeadline(() => modifyStratoMailMessagesInner(ids, action, workspaceId, accountEmail), 45_000, "STRATO Mail (Nachrichten aktualisieren)");
+}
+
+async function modifyStratoMailMessagesInner(ids: string[], action: MailThreadAction, workspaceId?: string, accountEmail?: string) {
   const c = await config(workspaceId, accountEmail);
   const client = await ImapClient.open(c);
   try {
@@ -790,13 +817,15 @@ class SmtpClient extends BufferedTls {
 }
 
 async function appendCopy(raw: Buffer, kind: "sent" | "draft", c: StratoConfig) {
-  const client = await ImapClient.open(c);
-  try {
-    const folders = await getFolders(client);
-    const folder = kind === "sent" ? folders.sent : folders.drafts;
-    if (!folder) return;
-    await client.append(folder, raw, kind === "draft" ? "\\Draft \\Seen" : "\\Seen");
-  } finally { await client.logout(); }
+  return withDeadline(async () => {
+    const client = await ImapClient.open(c);
+    try {
+      const folders = await getFolders(client);
+      const folder = kind === "sent" ? folders.sent : folders.drafts;
+      if (!folder) return;
+      await client.append(folder, raw, kind === "draft" ? "\\Draft \\Seen" : "\\Seen");
+    } finally { await client.logout(); }
+  }, 40_000, "STRATO Mail (Kopie speichern)");
 }
 
 export async function sendStratoMessage(args: { to: string; cc?: string; bcc?: string; subject: string; body: string; html?: string; threadId?: string | null; inReplyTo?: string; references?: string }, workspaceId?: string, accountEmail?: string) {
