@@ -29,6 +29,7 @@ type Lead = {
   jobCount: number;
   dealValue: number;
   probability: number;
+  updatedAt: string;
 };
 
 type ProductionState = {
@@ -99,6 +100,7 @@ function mapApiLead(lead: Record<string, unknown>): Lead {
     jobCount: Number(lead.jobCount || 0),
     dealValue: Number(lead.dealValue || 0),
     probability: Number(lead.probability || 0),
+    updatedAt: String(lead.updatedAt || ""),
   };
 }
 
@@ -232,6 +234,7 @@ export default function OutboundDashboard({ userName = "JJ-Media" }: { userName?
       jobCount: 0,
       dealValue: 0,
       probability: 0,
+      updatedAt: new Date().toISOString(),
     };
     setLeads((current) => [optimisticLead, ...current]);
     setShowCreate(false);
@@ -410,7 +413,7 @@ export default function OutboundDashboard({ userName = "JJ-Media" }: { userName?
       const payload = await response.json() as { error?: string };
       if (!response.ok) throw new Error(payload.error || "Profil-Screenshot konnte nicht gespeichert werden.");
       setLeads((current) => current.map((item) => item.id === lead.id
-        ? { ...item, videoStatus: "not_started", status: "Nicht erstellt", updated: "Instagram-Screenshot gespeichert" }
+        ? { ...item, videoStatus: "not_started", status: "Nicht erstellt", updated: "Instagram-Screenshot gespeichert", updatedAt: new Date().toISOString() }
         : item));
       showToast(`${lead.company}: Profil-Screenshot gespeichert. Jetzt kann das Video erstellt werden.`);
     } catch (error) {
@@ -849,7 +852,7 @@ export default function OutboundDashboard({ userName = "JJ-Media" }: { userName?
 
           {activeSection === "Studio" && (
             <LandingStudio
-              leads={leads.map((lead) => ({ id: lead.id, company: lead.company, slug: lead.slug }))}
+              leads={leads.map((lead) => ({ id: lead.id, company: lead.company, slug: lead.slug, updatedAt: lead.updatedAt }))}
               notify={showToast}
             />
           )}

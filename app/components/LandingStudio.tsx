@@ -11,7 +11,7 @@ import {
   parseLandingStudioConfig,
 } from "@/lib/landing-studio";
 
-type StudioLead = { id: string; company: string; slug: string };
+type StudioLead = { id: string; company: string; slug: string; updatedAt: string };
 type MediaAsset = {
   id: string;
   kind: string;
@@ -439,7 +439,7 @@ export default function LandingStudio({ leads, notify }: { leads: StudioLead[]; 
           </div>
           <SegmentedVideoPlayer
             segments={previewSegments}
-            socialProfileUrl={previewLead ? `/api/media/social/${previewLead.slug}` : null}
+            socialProfileUrl={previewLead ? `/api/media/social/${previewLead.slug}?v=${encodeURIComponent(previewLead.updatedAt)}` : null}
             masterVideoUrl={masterAsset?.previewUrl}
             company={previewLead?.company || "Musterunternehmen"}
             accentColor={config.accentColor}

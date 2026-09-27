@@ -55,6 +55,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
         confidence: leads.confidence,
         scrollVideoUrl: leads.scrollVideoUrl,
         landingPath: leads.landingPath,
+        updatedAt: leads.updatedAt,
       })
       .from(leads)
       .where(and(eq(leads.id, id), eq(leads.workspaceId, workspace.workspaceId)))

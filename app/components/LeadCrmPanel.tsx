@@ -43,6 +43,7 @@ type LeadDetail = {
   confidence: number;
   scrollVideoUrl: string | null;
   landingPath: string;
+  updatedAt: string;
 };
 
 type Activity = { id: string; type: string; title: string; detail: string; createdAt: string };
@@ -151,12 +152,16 @@ export default function LeadCrmPanel({
       const next = await response.json() as DetailPayload;
       if (!response.ok) throw new Error(next.error || "CRM-Daten konnten nicht geladen werden.");
       setPayload(next);
+      // Silent refreshes follow a mutation (capture, render, save, ...): push the fresh
+      // record up so the Studio's lead list (updatedAt-based cache busting, video status
+      // etc.) doesn't keep showing what was true before this panel's own action.
+      if (silent && next.lead) onUpdated(next.lead as unknown as Record<string, unknown>);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "CRM-Daten konnten nicht geladen werden.");
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [leadId]);
+  }, [leadId, onUpdated]);
 
   useEffect(() => {
     void loadDetails();

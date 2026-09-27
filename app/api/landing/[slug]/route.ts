@@ -42,7 +42,7 @@ export async function GET(_request: Request, context: { params: Promise<{ slug: 
 
     return Response.json({
       lead: { company: lead.company, slug: lead.slug },
-      scrollVideoUrl: lead.scrollVideoUrl ? `/api/media/social/${lead.slug}` : null,
+      scrollVideoUrl: lead.scrollVideoUrl ? `/api/media/social/${lead.slug}?v=${lead.updatedAt.getTime()}` : null,
       posterUrl: lead.scrollVideoUrl
         ? `/api/media/social/${lead.slug}?variant=poster&v=${lead.updatedAt.getTime()}`
         : null,
