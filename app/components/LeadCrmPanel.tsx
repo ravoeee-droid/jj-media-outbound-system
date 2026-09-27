@@ -57,6 +57,8 @@ type Permissions = {
   canGenerateVideo: boolean;
   canBookMeetings: boolean;
 };
+type VideoJob = { status: string; progress: number; error: string | null };
+
 type DetailPayload = {
   lead: LeadDetail;
   activities: Activity[];
@@ -64,6 +66,7 @@ type DetailPayload = {
   outreach: Outreach[];
   bookings: Booking[];
   permissions: Permissions;
+  videoJob: VideoJob | null;
   error?: string;
 };
 
@@ -249,6 +252,11 @@ export default function LeadCrmPanel({
     if (!lead || busyAction) return;
     setBusyAction("video");
     setMessage("");
+    // /api/generate blocks for the whole render (up to 5 minutes); poll the cheap
+    // detail endpoint in the background so the progress the renderer already
+    // reports (8% -> 100% in jobs.progress) actually reaches the screen instead
+    // of leaving a spinner with no feedback for minutes at a time.
+    const pollTimer = window.setInterval(() => { void loadDetails(true); }, 2500);
     try {
       const response = await fetch("/api/generate", {
         method: "POST",
@@ -262,6 +270,7 @@ export default function LeadCrmPanel({
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Video konnte nicht erstellt werden.");
     } finally {
+      window.clearInterval(pollTimer);
       setBusyAction("");
     }
   }
@@ -477,7 +486,7 @@ export default function LeadCrmPanel({
             <ActionButton icon="✓" title="Validieren" note={statusLabel[lead.validationStatus] || lead.validationStatus} disabled={!permissions.canManageLeads} busy={busyAction === "validate"} onClick={() => void runWorkflow("validate", "Lead wurde validiert.")} />
             <ActionButton icon="◇" title="Analysieren" note="Readiness & Priorität" disabled={!permissions.canManageLeads} busy={busyAction === "analyze"} onClick={() => void runWorkflow("analyze", "Lead-Readiness wurde aktualisiert.")} />
             <ActionButton icon="▣" title="Screenshot" note={lead.scrollVideoUrl ? "Vorhanden · neu erstellen" : "Instagram aufnehmen"} disabled={!permissions.canGenerateVideo || !lead.instagramUrl} busy={busyAction === "capture"} onClick={() => void captureProfile()} />
-            <ActionButton icon="▶" title="Video" note={lead.videoStatus === "ready" ? "Neu rendern" : "Persönlich rendern"} disabled={!permissions.canGenerateVideo || !lead.instagramUrl} busy={busyAction === "video"} onClick={() => void generateVideo()} />
+            <ActionButton icon="▶" title="Video" note={busyAction === "video" && payload?.videoJob?.status === "running" ? `Rendert … ${payload.videoJob.progress}%` : lead.videoStatus === "ready" ? "Neu rendern" : "Persönlich rendern"} disabled={!permissions.canGenerateVideo || !lead.instagramUrl} busy={busyAction === "video"} onClick={() => void generateVideo()} />
             <ActionButton icon="✉" title="Info-Mail" note={lead.email || "E-Mail fehlt"} disabled={!permissions.canSendEmail || !lead.email || !canContact} busy={busyAction === "email"} onClick={() => void prepareEmail()} />
             <ActionButton icon="↺" title="Rückruf" note={lead.nextActionAt ? displayDate(lead.nextActionAt) : "Zeit festlegen"} disabled={!permissions.canManageLeads || !canContact} onClick={() => { setScheduleMode("callback"); setScheduleValue(defaultFuture(2)); }} />
             <ActionButton icon="◷" title="Termin" note="Freie Zeiten laden" disabled={!permissions.canBookMeetings || !canContact} onClick={() => { setScheduleMode(null); setMeetingPicker(true); }} />

@@ -1,7 +1,7 @@
 import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db";
-import { activities, bookings, leads, outreach, tasks } from "@/db/schema";
+import { activities, bookings, jobs, leads, outreach, tasks } from "@/db/schema";
 import { hasPermission } from "@/lib/team";
 import { apiError, requireWorkspace } from "@/lib/workspace";
 
@@ -66,7 +66,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
       throw new Error("FORBIDDEN");
     }
 
-    const [activityRows, taskRows, outreachRows, bookingRows] = await Promise.all([
+    const [activityRows, taskRows, outreachRows, bookingRows, videoJobRows] = await Promise.all([
       db
         .select({
           id: activities.id,
@@ -119,6 +119,12 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
         .where(eq(bookings.leadId, id))
         .orderBy(desc(bookings.createdAt))
         .limit(10),
+      db
+        .select({ status: jobs.status, progress: jobs.progress, error: jobs.error })
+        .from(jobs)
+        .where(and(eq(jobs.leadId, id), eq(jobs.type, "lead_video_render")))
+        .orderBy(desc(jobs.createdAt))
+        .limit(1),
     ]);
 
     return Response.json({
@@ -127,6 +133,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
       tasks: taskRows,
       outreach: outreachRows,
       bookings: bookingRows,
+      videoJob: videoJobRows[0] || null,
       permissions: {
         canManageLeads: hasPermission(workspace.role, workspace.permissions, "manage_leads"),
         canSendEmail: hasPermission(workspace.role, workspace.permissions, "send_email"),
