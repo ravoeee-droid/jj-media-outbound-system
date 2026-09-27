@@ -1,8 +1,9 @@
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { put } from "@vercel/blob";
 import sharp from "sharp";
 import { getDb } from "@/db";
 import { activities, assets, leads } from "@/db/schema";
+import { deleteMedia } from "@/lib/media-store";
 import { apiError, requireWorkspace } from "@/lib/workspace";
 
 export const runtime = "nodejs";
@@ -39,16 +40,24 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     });
 
     const db = getDb();
+    const previous = await db
+      .select({ id: assets.id, pathname: assets.pathname, blobUrl: assets.blobUrl })
+      .from(assets)
+      .where(and(eq(assets.workspaceId, workspace.workspaceId), eq(assets.kind, `social_profile_upload:${lead.id}`)))
+      .orderBy(desc(assets.createdAt))
+      .limit(1);
+
+    const [asset] = await db.insert(assets).values({
+      workspaceId: workspace.workspaceId,
+      kind: `social_profile_upload:${lead.id}`,
+      blobUrl: blob.url,
+      pathname: blob.pathname,
+      filename: `${lead.slug}-instagram-profile.webp`,
+      contentType: "image/webp",
+      size: optimized.byteLength,
+    }).returning();
+
     await Promise.all([
-      db.insert(assets).values({
-        workspaceId: workspace.workspaceId,
-        kind: `social_profile_upload:${lead.id}`,
-        blobUrl: blob.url,
-        pathname: blob.pathname,
-        filename: `${lead.slug}-instagram-profile.webp`,
-        contentType: "image/webp",
-        size: optimized.byteLength,
-      }),
       db.update(leads).set({ scrollVideoUrl: blob.url, videoStatus: "not_started", updatedAt: new Date() }).where(eq(leads.id, lead.id)),
       db.insert(activities).values({
         workspaceId: workspace.workspaceId,
@@ -57,10 +66,17 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         type: "social_profile_uploaded",
         title: "Instagram-Screenshot hinterlegt",
         detail: "Der manuelle Profil-Screenshot wird beim nächsten Video-Render verwendet.",
+        metadata: { assetId: asset.id, previousAssetId: previous[0]?.id || null },
       }),
     ]);
 
-    return Response.json({ ok: true, previewUrl: `/api/media/social/${lead.slug}` });
+    const stale = previous[0];
+    if (stale) {
+      await deleteMedia(stale.pathname || stale.blobUrl).catch(() => undefined);
+      await db.delete(assets).where(and(eq(assets.id, stale.id), eq(assets.workspaceId, workspace.workspaceId)));
+    }
+
+    return Response.json({ ok: true, previewUrl: `/api/media/social/${lead.slug}?v=${Date.now()}` });
   } catch (error) {
     return apiError(error);
   }
