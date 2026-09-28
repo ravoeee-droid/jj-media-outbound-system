@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { acquisitionLeadScores, leads, settings } from "@/db/schema";
-import { buildClaimContext } from "@/lib/facts-ledger";
+import { buildClaimContext, syncLeadFacts } from "@/lib/facts-ledger";
 
 export type Personalization = {
   version: number;
@@ -55,6 +55,7 @@ export async function savePersonalization(workspaceId: string, leadId: string, p
 
 export async function generatePersonalization(workspaceId: string, leadId: string) {
   const db = getDb();
+  await syncLeadFacts(workspaceId, leadId);
   const [lead, score, existing, claims] = await Promise.all([
     db.select().from(leads).where(and(eq(leads.workspaceId, workspaceId), eq(leads.id, leadId))).limit(1).then((rows) => rows[0]),
     db.select().from(acquisitionLeadScores).where(and(eq(acquisitionLeadScores.workspaceId, workspaceId), eq(acquisitionLeadScores.leadId, leadId))).limit(1).then((rows) => rows[0] || null),
