@@ -38,7 +38,7 @@ export function deriveLeadSignals(lead: typeof leads.$inferSelect): SignalInput[
       type: "pain",
       strength: clamp(55 + Math.min(lead.jobCount * 8, 40)),
       confidence: lead.jobTitles.length ? 95 : 80,
-      title: \`\${lead.jobCount} offene Stelle\${lead.jobCount === 1 ? "" : "n"}\`,
+      title: `${lead.jobCount} offene Stelle${lead.jobCount === 1 ? "" : "n"}`,
       detail: lead.jobTitles.length ? lead.jobTitles.slice(0, 4).join(", ") : "Aktiver Personalbedarf im CRM erkannt.",
       sourceKind: "job_signal",
       sourceUrl,
@@ -53,7 +53,7 @@ export function deriveLeadSignals(lead: typeof leads.$inferSelect): SignalInput[
       strength: clamp(100 - lead.websiteScore),
       confidence: 85,
       title: "Schwacher Web-Auftritt",
-      detail: \`Website-Score \${lead.websiteScore}/100 – klarer Optimierungshebel.\`,
+      detail: `Website-Score ${lead.websiteScore}/100 – klarer Optimierungshebel.`,
       sourceKind: "website_analysis",
       sourceUrl: lead.websiteUrl,
       evidence: { websiteScore: lead.websiteScore },
@@ -108,7 +108,7 @@ export function deriveLeadSignals(lead: typeof leads.$inferSelect): SignalInput[
       strength: clamp(70 + Math.floor((lead.watchPercent - 60) / 2)),
       confidence: 99,
       title: "Starkes Video-Engagement",
-      detail: \`\${lead.watchPercent}% des persönlichen Videos angesehen.\`,
+      detail: `${lead.watchPercent}% des persönlichen Videos angesehen.`,
       sourceKind: "behavior",
       evidence: { watchPercent: lead.watchPercent },
     });
@@ -119,7 +119,7 @@ export function deriveLeadSignals(lead: typeof leads.$inferSelect): SignalInput[
       strength: clamp(35 + lead.watchPercent / 2),
       confidence: 99,
       title: "Video angesehen",
-      detail: \`\${lead.watchPercent}% angesehen.\`,
+      detail: `${lead.watchPercent}% angesehen.`,
       sourceKind: "behavior",
       evidence: { watchPercent: lead.watchPercent },
     });
@@ -145,7 +145,7 @@ export function deriveLeadSignals(lead: typeof leads.$inferSelect): SignalInput[
       strength: clamp(50 + Math.log10(Math.max(lead.dealValue, 1000) / 1000) * 25),
       confidence: 90,
       title: "Dealwert hinterlegt",
-      detail: \`\${lead.dealValue.toLocaleString("de-DE")} € potenzieller Auftragswert.\`,
+      detail: `${lead.dealValue.toLocaleString("de-DE")} € potenzieller Auftragswert.`,
       sourceKind: "crm",
       evidence: { dealValue: lead.dealValue },
     });
@@ -158,7 +158,7 @@ export function deriveLeadSignals(lead: typeof leads.$inferSelect): SignalInput[
       strength: clamp(lead.confidence),
       confidence: clamp(lead.confidence),
       title: "Research ist belastbar",
-      detail: \`\${lead.confidence}% Research-Confidence.\`,
+      detail: `${lead.confidence}% Research-Confidence.`,
       sourceKind: "research",
       sourceUrl,
       evidence: { confidence: lead.confidence },
@@ -187,7 +187,7 @@ export function scoreLead(lead: typeof leads.$inferSelect, signals: SignalInput[
   const total = clamp(fit * 0.22 + pain * 0.26 + timing * 0.2 + reachability * 0.14 + value * 0.12 + confidence * 0.06);
 
   let recommendedAngle = "Relevanten Wachstumshebel mit konkretem nächsten Schritt ansprechen.";
-  if (lead.jobCount >= 2) recommendedAngle = \`\${lead.jobCount} offene Stellen als Kosten- und Kapazitätsproblem ansprechen und schnelleren Recruiting-Kanal positionieren.\`;
+  if (lead.jobCount >= 2) recommendedAngle = `${lead.jobCount} offene Stellen als Kosten- und Kapazitätsproblem ansprechen und schnelleren Recruiting-Kanal positionieren.`;
   else if (lead.websiteScore > 0 && lead.websiteScore < 60) recommendedAngle = "Schwachen digitalen Auftritt konkret zeigen und den direkten Conversion-/Vertrauenshebel anbieten.";
   else if (lead.instagramUrl) recommendedAngle = "Bestehende Social-Präsenz würdigen und konkret zeigen, wie daraus planbar mehr Anfragen oder Bewerbungen entstehen.";
 
