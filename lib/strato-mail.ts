@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import tls, { type TLSSocket } from "node:tls";
-import { getStoredStratoAccounts, getStoredStratoCredentials } from "@/lib/strato-credentials";
+import { ensureBootstrapStratoAccounts, getStoredStratoAccounts, getStoredStratoCredentials } from "@/lib/strato-credentials";
 
 export type MailView = "inbox" | "unread" | "starred" | "sent" | "drafts" | "all" | "trash";
 export type MailThreadAction = "archive" | "read" | "unread" | "star" | "unstar" | "trash" | "untrash" | "spam" | "inbox";
@@ -73,17 +73,35 @@ export function stratoMailStatus() {
 
 export async function getStratoMailStatus(workspaceId: string, accountEmail?: string) {
   const env = stratoMailStatus();
-  if (env.configured) {
+
+  // Workspace credentials are the source of truth. This prevents a stale Vercel
+  // STRATO_MAIL_EMAIL from silently overriding the primary mailbox selected in JJ-Media.
+  await ensureBootstrapStratoAccounts(workspaceId);
+  const stored = await getStoredStratoCredentials(workspaceId, accountEmail);
+  if (stored) {
+    return {
+      configured: true,
+      email: stored.email,
+      source: "stored" as const,
+      imapHost: env.imapHost,
+      imapPort: env.imapPort,
+      smtpHost: env.smtpHost,
+      smtpPort: env.smtpPort,
+      accounts: await getStoredStratoAccounts(workspaceId),
+    };
+  }
+
+  if (env.configured && (!accountEmail || accountEmail.trim().toLowerCase() === env.email.trim().toLowerCase())) {
     return {
       ...env,
       accounts: [{ email: env.email, senderName: envText("STRATO_MAIL_NAME") || envText("EMAIL_SENDER_NAME") || "JJ-Media", primary: true }],
     };
   }
-  const stored = await getStoredStratoCredentials(workspaceId, accountEmail);
+
   return {
-    configured: Boolean(stored?.email && stored?.password),
-    email: stored?.email || "",
-    source: stored ? "stored" as const : "none" as const,
+    configured: false,
+    email: "",
+    source: "none" as const,
     imapHost: env.imapHost,
     imapPort: env.imapPort,
     smtpHost: env.smtpHost,
@@ -94,19 +112,9 @@ export async function getStratoMailStatus(workspaceId: string, accountEmail?: st
 
 async function config(workspaceId?: string, accountEmail?: string): Promise<StratoConfig> {
   const env = stratoMailStatus();
-  if (env.configured) {
-    return {
-      email: env.email,
-      password: process.env.STRATO_MAIL_PASSWORD || "",
-      senderName: envText("STRATO_MAIL_NAME") || envText("EMAIL_SENDER_NAME") || "JJ-Media",
-      imapHost: env.imapHost,
-      imapPort: env.imapPort,
-      smtpHost: env.smtpHost,
-      smtpPort: env.smtpPort,
-    };
-  }
 
   if (workspaceId) {
+    await ensureBootstrapStratoAccounts(workspaceId);
     const stored = await getStoredStratoCredentials(workspaceId, accountEmail);
     if (stored) {
       return {
@@ -119,6 +127,18 @@ async function config(workspaceId?: string, accountEmail?: string): Promise<Stra
         smtpPort: env.smtpPort,
       };
     }
+  }
+
+  if (env.configured && (!accountEmail || accountEmail.trim().toLowerCase() === env.email.trim().toLowerCase())) {
+    return {
+      email: env.email,
+      password: process.env.STRATO_MAIL_PASSWORD || "",
+      senderName: envText("STRATO_MAIL_NAME") || envText("EMAIL_SENDER_NAME") || "JJ-Media",
+      imapHost: env.imapHost,
+      imapPort: env.imapPort,
+      smtpHost: env.smtpHost,
+      smtpPort: env.smtpPort,
+    };
   }
 
   throw new Error("STRATO Mail ist noch nicht eingerichtet.");
