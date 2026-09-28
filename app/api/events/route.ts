@@ -3,6 +3,7 @@ import { z } from "zod";
 import { assertDatabaseConfigured, getDb } from "@/db";
 import { events, leads, settings } from "@/db/schema";
 import { sendTelegramMessage } from "@/lib/telegram";
+import { refreshSequence } from "@/lib/adaptive-sequence";
 
 const eventInput = z.object({
   slug: z.string().trim().min(2).max(250),
@@ -30,10 +31,11 @@ export async function POST(request: Request) {
     await db.insert(events).values({ leadId: lead.id, type: input.type, value: input.value, visitorId: input.visitorId, metadata: input.metadata ?? {} });
     const updates: Partial<typeof leads.$inferInsert> = { lastActivityAt: new Date(), updatedAt: new Date() };
     if (input.type === "view" || input.type === "play") {
-      if (lead.pipelineStage === "new" || lead.pipelineStage === "qualified" || lead.pipelineStage === "contacted") updates.pipelineStage = "replied";
+      if (lead.pipelineStage === "new" || lead.pipelineStage === "qualified") updates.pipelineStage = "contacted";
     }
     if (input.type === "progress" && input.value !== undefined) updates.watchPercent = Math.max(lead.watchPercent, Math.round(input.value));
     await db.update(leads).set(updates).where(eq(leads.id, lead.id));
+    await refreshSequence(lead.workspaceId, lead.id).catch(() => undefined);
 
     const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || process.env.NEXTAUTH_URL || process.env.AUTH_URL || new URL(request.url).origin).replace(/\/$/, "");
     const landingUrl = `${baseUrl}/v/${lead.slug}`;
