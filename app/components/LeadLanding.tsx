@@ -7,6 +7,7 @@ import { defaultLandingStudioConfig, LandingStudioConfig } from "@/lib/landing-s
 import styles from "./LeadLanding.module.css";
 
 type LeadLandingProps = { company: string; slug: string; initialVideoUrl?: string | null };
+type LandingPersonalization = { hook: string; landingEyebrow: string; landingHeadline: string; landingSubheadline: string; cta: string; status: string };
 
 const steps = [
   { number: "01", title: "Profil schärfen", text: "In Sekunden muss klar werden, für wen Ihr Angebot gedacht ist und warum man Ihnen vertrauen sollte." },
@@ -27,7 +28,11 @@ export default function LeadLanding({ company, slug, initialVideoUrl = null }: L
   const [renderedVideoUrl, setRenderedVideoUrl] = useState<string | null>(initialVideoUrl);
   const [studioConfig, setStudioConfig] = useState<LandingStudioConfig>(defaultLandingStudioConfig);
   const [calendarEmbedUrl, setCalendarEmbedUrl] = useState<string | null>(null);
+  const [personalization, setPersonalization] = useState<LandingPersonalization | null>(null);
   const shortCompany = useMemo(() => company.replace(/\b(GmbH|AG|KG|OHG)\b/gi, "").trim(), [company]);
+  const personalizedHeadline = (personalization?.landingHeadline || studioConfig.headline).replaceAll("{{unternehmen}}", shortCompany);
+  const personalizedSubheadline = personalization?.landingSubheadline || studioConfig.subtitle;
+  const personalizedCta = personalization?.cta || studioConfig.ctaLabel || "15 Minuten Potenzial-Call";
 
   function visitorId() {
     try {
@@ -51,12 +56,14 @@ export default function LeadLanding({ company, slug, initialVideoUrl = null }: L
         renderedVideoUrl?: string | null;
         calendarEmbedUrl?: string | null;
         studioConfig?: LandingStudioConfig;
+        personalization?: LandingPersonalization | null;
       }) => {
         setScrollVideoUrl(payload.scrollVideoUrl || null);
         setPosterUrl(payload.posterUrl || null);
         setRenderedVideoUrl((current) => current || payload.renderedVideoUrl || null);
         setCalendarEmbedUrl(payload.calendarEmbedUrl || null);
         if (payload.studioConfig) setStudioConfig(payload.studioConfig);
+        setPersonalization(payload.personalization || null);
       })
       .catch(() => undefined);
 
@@ -106,13 +113,13 @@ export default function LeadLanding({ company, slug, initialVideoUrl = null }: L
       <section className="lead-hero">
         <div className="personal-label">
           <span className="personal-label__bars" aria-hidden="true"><i /><i /><i /></span>
-          Persönliche Social-Media-Analyse für <strong>{shortCompany}</strong>
+          {personalization?.landingEyebrow || "Persönliche Social-Media-Analyse"} für <strong>{shortCompany}</strong>
         </div>
 
         <div className="lead-hero-copy">
           <span>Nur für {shortCompany}</span>
-          <h1>Ich habe Ihren Auftritt geprüft – hier sind die <em>3 stärksten Hebel</em>, die ich zuerst angehen würde.</h1>
-          <p>Kurzes persönliches Video. Konkrete Beobachtungen. Wenn es relevant ist, können Sie direkt daneben einen 15-Minuten-Termin wählen.</p>
+          <h1>{personalization?.hook || <>Ich habe Ihren Auftritt geprüft – hier sind die <em>3 stärksten Hebel</em>, die ich zuerst angehen würde.</>}</h1>
+          <p>{personalization?.landingSubheadline || "Kurzes persönliches Video. Konkrete Beobachtungen. Wenn es relevant ist, können Sie direkt daneben einen 15-Minuten-Termin wählen."}</p>
           <div className="lead-proof-row"><span>✓ Persönlich vorbereitet</span><span>✓ Kein Pitch-Marathon</span><span>✓ 15 Minuten</span></div>
         </div>
 
@@ -141,16 +148,12 @@ export default function LeadLanding({ company, slug, initialVideoUrl = null }: L
             )}
             <div className="video-conversion-strip">
               <div><small>PERSONALISIERT</small><strong>{shortCompany}</strong></div>
-              <button type="button" onClick={trackCta}>Termin auswählen →</button>
+              <button type="button" onClick={trackCta}>{personalizedCta} →</button>
             </div>
             <h2 className="landing-video-headline" style={{ "--landing-accent": studioConfig.accentColor } as React.CSSProperties}>
-              {studioConfig.headline.split("{{unternehmen}}").map((part, index, parts) => (
-                <span className="headline-fragment" key={`${part}-${index}`}>
-                  {part}{index < parts.length - 1 && <em>{shortCompany}</em>}
-                </span>
-              ))}
+              {personalizedHeadline}
             </h2>
-            <p className="lead-subtitle">{studioConfig.subtitle}</p>
+            <p className="lead-subtitle">{personalizedSubheadline}</p>
             <div className="landing-outcomes">{outcomes.map((item) => <span key={item}>✓ {item}</span>)}</div>
           </div>
 
@@ -195,7 +198,7 @@ export default function LeadLanding({ company, slug, initialVideoUrl = null }: L
         <button type="button" onClick={trackCta}>Freien Termin auswählen →</button>
       </section>
 
-      <button className="lead-mobile-cta" type="button" onClick={trackCta}>15-Minuten-Termin wählen →</button>
+      <button className="lead-mobile-cta" type="button" onClick={trackCta}>{personalizedCta} →</button>
     </main>
   );
 }
