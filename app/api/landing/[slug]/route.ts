@@ -3,6 +3,7 @@ import { desc, eq } from "drizzle-orm";
 import { assertDatabaseConfigured, getDb } from "@/db";
 import { assets, leads, settings } from "@/db/schema";
 import { parseLandingStudioConfig } from "@/lib/landing-studio";
+import { getPersonalization } from "@/lib/personalization-engine";
 
 type StoredAsset = typeof assets.$inferSelect;
 
@@ -30,9 +31,10 @@ export async function GET(_request: Request, context: { params: Promise<{ slug: 
     const [lead] = await db.select().from(leads).where(eq(leads.slug, slug)).limit(1);
     if (!lead) return Response.json({ error: "Landingpage nicht gefunden." }, { status: 404 });
 
-    const [videoAssets, settingRows] = await Promise.all([
+    const [videoAssets, settingRows, personalization] = await Promise.all([
       db.select().from(assets).where(eq(assets.workspaceId, lead.workspaceId)).orderBy(desc(assets.createdAt)).limit(100),
       db.select().from(settings).where(eq(settings.workspaceId, lead.workspaceId)),
+      getPersonalization(lead.workspaceId, lead.id),
     ]);
     const values = Object.fromEntries(settingRows.map((row) => [row.key, row.value]));
     const renderedVideo = videoAssets.find((asset) => asset.kind === `rendered_video:${lead.id}`);
@@ -51,6 +53,14 @@ export async function GET(_request: Request, context: { params: Promise<{ slug: 
       bookingCta: values.booking_cta || "15 Minuten Kennenlernen",
       offerName: values.offer_name || "JJ-Media",
       studioConfig,
+      personalization: personalization ? {
+        hook: personalization.hook,
+        landingEyebrow: personalization.landingEyebrow,
+        landingHeadline: personalization.landingHeadline,
+        landingSubheadline: personalization.landingSubheadline,
+        cta: personalization.cta,
+        status: personalization.status,
+      } : null,
     });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Landingpage konnte nicht geladen werden." }, { status: 500 });
