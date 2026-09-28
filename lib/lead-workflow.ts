@@ -3,6 +3,7 @@ import { getDb } from "@/db";
 import { activities, bookings, leads, outreach, tasks, whatsappQueue, whatsappThreads } from "@/db/schema";
 import { cancelPendingEmailFollowups } from "@/lib/outreach-lifecycle";
 import { refreshLeadIntelligence } from "@/lib/acquisition-intelligence";
+import { refreshSequence } from "@/lib/adaptive-sequence";
 
 type Context = {
   workspaceId: string;
@@ -183,6 +184,7 @@ export async function scheduleManualMeeting(context: Context, scheduledAt: Date)
     userId: context.userId,
     reason: "Termin wurde im CRM eingetragen.",
   });
+  await refreshSequence(context.workspaceId, lead.id).catch(() => undefined);
   return { lead: updated, booking };
 }
 
@@ -235,6 +237,7 @@ export async function markNoInterest(context: Context) {
     title: "Kein Interesse",
     detail: "Weiterer Kontakt wurde gesperrt.",
   });
+  await refreshSequence(context.workspaceId, lead.id).catch(() => undefined);
 
   return updated;
 }
