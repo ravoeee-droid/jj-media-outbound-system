@@ -898,16 +898,17 @@ export async function listRecentStratoInboxMessages(days = 2, workspaceId?: stri
     await client.execute('SELECT "INBOX"');
     const since = new Date(Date.now() - Math.max(1, days) * 24 * 60 * 60 * 1000);
     const uids = parseUidSearch(await client.execute(`UID SEARCH SINCE ${imapDate(since)}`)).slice(-150).reverse();
-    const messages: Array<{ messageId: string; references: string; inReplyTo: string; from: string; subject: string; date: string }> = [];
+    const messages: Array<{ id: string; messageId: string; references: string; inReplyTo: string; from: string; subject: string; date: string }> = [];
     if (!uids.length) return messages;
     const response = await client.execute(`UID FETCH ${uids.join(",")} (UID BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE MESSAGE-ID REFERENCES IN-REPLY-TO)])`);
     const chunks = splitFetchResponses(response);
-    const byUid = new Map<number, { messageId: string; references: string; inReplyTo: string; from: string; subject: string; date: string }>();
+    const byUid = new Map<number, { id: string; messageId: string; references: string; inReplyTo: string; from: string; subject: string; date: string }>();
     for (const chunk of chunks) {
       const uid = Number(responseText(chunk).match(/\bUID (\d+)\b/i)?.[1] || 0);
       if (!uid) continue;
       const headers = parseHeaders(extractLiterals(chunk)[0] || Buffer.alloc(0));
       byUid.set(uid, {
+        id: encodeMailId("INBOX", uid),
         messageId: headers["message-id"] || "",
         references: headers.references || "",
         inReplyTo: headers["in-reply-to"] || "",
