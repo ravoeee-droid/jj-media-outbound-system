@@ -314,6 +314,61 @@ export const acquisitionLeadScores = pgTable(
   ],
 );
 
+
+export const outboundResearchRuns = pgTable("outbound_research_runs", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspace: text("workspace").notNull().default("default"),
+  companyId: text("company_id").notNull(),
+  leadId: text("lead_id"),
+  status: text("status").notNull().default("queued"),
+  strategyVersion: text("strategy_version").notNull(),
+  sourceUrls: jsonb("source_urls").$type<string[]>().notNull().default([]),
+  summary: jsonb("summary").$type<Record<string, unknown>>().notNull().default({}),
+  confidence: text("confidence"),
+  attempt: integer("attempt").notNull().default(0),
+  maxAttempts: integer("max_attempts").notNull().default(4),
+  leaseOwner: text("lease_owner"),
+  leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+  lastError: text("last_error"),
+  queuedAt: timestamp("queued_at", { withTimezone: true }).defaultNow().notNull(),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  createdAt,
+  updatedAt,
+});
+
+export const outboundEvidenceItems = pgTable(
+  "outbound_evidence_items",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspace: text("workspace").notNull().default("default"),
+    researchRunId: uuid("research_run_id").references(() => outboundResearchRuns.id, { onDelete: "set null" }),
+    companyId: text("company_id").notNull(),
+    leadId: text("lead_id"),
+    evidenceKey: text("evidence_key").notNull(),
+    evidenceType: text("evidence_type").notNull(),
+    claim: text("claim").notNull(),
+    valueText: text("value_text"),
+    sourceUrl: text("source_url"),
+    sourceTitle: text("source_title"),
+    observedAt: timestamp("observed_at", { withTimezone: true }).notNull(),
+    confidence: text("confidence").notNull(),
+    contentHash: text("content_hash"),
+    excerpt: text("excerpt"),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    reviewStatus: text("review_status").notNull().default("proposed"),
+    outreachAllowed: boolean("outreach_allowed").notNull().default(false),
+    locked: boolean("locked").notNull().default(false),
+    reviewedBy: text("reviewed_by"),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    createdAt,
+  },
+  (table) => [
+    index("outbound_evidence_items_lead_review_idx").on(table.leadId, table.reviewStatus, table.outreachAllowed),
+  ],
+);
+
 export const activities = pgTable(
   "activities",
   {
