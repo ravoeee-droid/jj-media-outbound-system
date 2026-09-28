@@ -258,6 +258,7 @@ export const acquisitionLeadControls = pgTable(
   (table) => [
     index("acquisition_lead_controls_workspace_idx").on(table.workspaceId),
     index("acquisition_lead_controls_step_idx").on(table.workspaceId, table.currentStep),
+    index("acquisition_lead_controls_updated_by_idx").on(table.updatedById),
   ],
 );
 
