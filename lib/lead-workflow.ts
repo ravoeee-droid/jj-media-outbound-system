@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { activities, bookings, leads, outreach, tasks, whatsappQueue, whatsappThreads } from "@/db/schema";
 import { cancelPendingEmailFollowups } from "@/lib/outreach-lifecycle";
+import { refreshLeadIntelligence } from "@/lib/acquisition-intelligence";
 
 type Context = {
   workspaceId: string;
@@ -83,7 +84,8 @@ export async function analyzeLead(context: Context) {
       : "Noch nicht kontaktbereit · weitere Recherche empfohlen.",
   });
 
-  return updated;
+  await refreshLeadIntelligence({ workspaceId: context.workspaceId, leadId: context.leadId });
+  return getLead(context);
 }
 
 export async function scheduleCallback(context: Context, dueAt: Date) {
