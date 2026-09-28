@@ -6,6 +6,7 @@ import { sendStratoMessage } from "@/lib/strato-mail";
 import { defaultSettings, renderEmailHtml, renderTemplate } from "@/lib/templates";
 import { hasPermission } from "@/lib/team";
 import { apiError, requirePermission } from "@/lib/workspace";
+import { generatePersonalization, getPersonalization } from "@/lib/personalization-engine";
 
 const inputSchema = z.object({
   leadId: z.string().uuid(),
@@ -48,13 +49,22 @@ export async function POST(request: Request) {
 
     const values = { ...defaultSettings, ...Object.fromEntries(settingRows.map((row) => [row.key, row.value])) };
     const infoRequested = input.context === "info_requested" && input.step === 1;
+    const personalization = input.step === 1 && !infoRequested
+      ? (await getPersonalization(workspace.workspaceId, lead.id)
+        || await generatePersonalization(workspace.workspaceId, lead.id).catch(() => null))
+      : null;
     const baseSubjectTemplate = infoRequested ? values.info_email_subject : values.email_subject;
     const template = input.step === 1
-      ? (infoRequested ? values.info_email_body : values.email_body)
+      ? (infoRequested ? values.info_email_body : personalization?.emailBody || values.email_body)
       : input.step === 2
         ? values.followup_1_body
         : values.followup_2_body;
-    const subject = input.subject || renderTemplate(input.step === 1 ? baseSubjectTemplate : `Re: ${values.email_subject}`, lead, appBaseUrl);
+    const subjectTemplate = input.step === 1 && personalization?.subject
+      ? personalization.subject
+      : input.step === 1
+        ? baseSubjectTemplate
+        : `Re: ${values.email_subject}`;
+    const subject = input.subject || renderTemplate(subjectTemplate, lead, appBaseUrl);
     const body = input.body || renderTemplate(template, lead, appBaseUrl);
     const html = renderEmailHtml(body, lead, appBaseUrl);
     const mailUrl = `mailto:${encodeURIComponent(lead.email)}?subject=${encodeURIComponent(subject)}`;
