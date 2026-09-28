@@ -262,6 +262,58 @@ export const acquisitionLeadControls = pgTable(
   ],
 );
 
+
+export const acquisitionLeadSignals = pgTable(
+  "acquisition_lead_signals",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    leadId: uuid("lead_id").notNull().references(() => leads.id, { onDelete: "cascade" }),
+    signalKey: text("signal_key").notNull(),
+    signalType: text("signal_type").notNull().default("fact"),
+    strength: integer("strength").notNull().default(50),
+    confidence: integer("confidence").notNull().default(50),
+    title: text("title").notNull(),
+    detail: text("detail").notNull().default(""),
+    sourceUrl: text("source_url").notNull().default(""),
+    sourceKind: text("source_kind").notNull().default("crm"),
+    evidence: jsonb("evidence").$type<Record<string, unknown>>().notNull().default({}),
+    observedAt: timestamp("observed_at", { withTimezone: true }).defaultNow().notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [
+    uniqueIndex("acquisition_lead_signals_unique").on(table.leadId, table.signalKey),
+    index("acquisition_lead_signals_workspace_idx").on(table.workspaceId, table.observedAt),
+    index("acquisition_lead_signals_lead_idx").on(table.leadId, table.strength),
+  ],
+);
+
+export const acquisitionLeadScores = pgTable(
+  "acquisition_lead_scores",
+  {
+    leadId: uuid("lead_id").primaryKey().references(() => leads.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    fitScore: integer("fit_score").notNull().default(0),
+    painScore: integer("pain_score").notNull().default(0),
+    timingScore: integer("timing_score").notNull().default(0),
+    reachabilityScore: integer("reachability_score").notNull().default(0),
+    valueScore: integer("value_score").notNull().default(0),
+    confidenceScore: integer("confidence_score").notNull().default(0),
+    totalScore: integer("total_score").notNull().default(0),
+    recommendedAngle: text("recommended_angle").notNull().default(""),
+    rationale: text("rationale").notNull().default(""),
+    breakdown: jsonb("breakdown").$type<Record<string, unknown>>().notNull().default({}),
+    scoredAt: timestamp("scored_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [
+    index("acquisition_lead_scores_workspace_idx").on(table.workspaceId, table.totalScore),
+  ],
+);
+
 export const activities = pgTable(
   "activities",
   {
