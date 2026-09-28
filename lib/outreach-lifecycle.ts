@@ -3,6 +3,7 @@ import { getDb } from "@/db";
 import { activities, leads, outreach, tasks } from "@/db/schema";
 import { extractMailReferenceIds } from "@/lib/outreach-policy";
 import { getStratoMailStatus, listRecentStratoInboxMessages } from "@/lib/strato-mail";
+import { refreshSequence } from "@/lib/adaptive-sequence";
 
 export async function cancelPendingEmailFollowups(args: {
   workspaceId: string;
@@ -132,6 +133,7 @@ export async function syncInboundEmailReplies(workspaceId?: string) {
           }),
         ]);
       }
+      await refreshSequence(currentWorkspaceId, leadId).catch(() => undefined);
     }
   }
 
