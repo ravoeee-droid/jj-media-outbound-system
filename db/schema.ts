@@ -231,6 +231,36 @@ export const researchCandidates = pgTable(
   ],
 );
 
+
+export const acquisitionWorkspaceControls = pgTable("acquisition_workspace_controls", {
+  workspaceId: uuid("workspace_id").primaryKey().references(() => workspaces.id, { onDelete: "cascade" }),
+  mode: text("mode").$type<"manual" | "copilot" | "autopilot">().notNull().default("copilot"),
+  guidedMode: boolean("guided_mode").notNull().default(true),
+  allowManualOverride: boolean("allow_manual_override").notNull().default(true),
+  createdAt,
+  updatedAt,
+});
+
+export const acquisitionLeadControls = pgTable(
+  "acquisition_lead_controls",
+  {
+    leadId: uuid("lead_id").primaryKey().references(() => leads.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    modeOverride: text("mode_override").$type<"manual" | "copilot" | "autopilot">(),
+    currentStep: text("current_step").notNull().default("research"),
+    lockedSteps: jsonb("locked_steps").$type<string[]>().notNull().default([]),
+    skippedSteps: jsonb("skipped_steps").$type<string[]>().notNull().default([]),
+    pinnedValues: jsonb("pinned_values").$type<Record<string, unknown>>().notNull().default({}),
+    updatedById: uuid("updated_by_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt,
+    updatedAt,
+  },
+  (table) => [
+    index("acquisition_lead_controls_workspace_idx").on(table.workspaceId),
+    index("acquisition_lead_controls_step_idx").on(table.workspaceId, table.currentStep),
+  ],
+);
+
 export const activities = pgTable(
   "activities",
   {
