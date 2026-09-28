@@ -5,6 +5,7 @@ import { settings } from "@/db/schema";
 
 const KEY = "strato_mail_credentials_v1";
 const ACCOUNT_KEY_PREFIX = "strato_mail_credentials_account_v1:";
+export const PRIMARY_STRATO_ACCOUNT = { email: "service@jj-media.info", senderName: "JJ-Media" } as const;
 const BOOTSTRAP_ACCOUNTS = [
   { email: "jessica.just@jj-media.info", senderName: "Jessica Just" },
 ] as const;
@@ -117,8 +118,28 @@ export async function deleteStoredStratoCredentials(workspaceId: string, email?:
 }
 
 export async function ensureBootstrapStratoAccounts(workspaceId: string) {
-  const primary = await getStoredStratoCredentials(workspaceId);
+  let primary = await getStoredStratoCredentials(workspaceId);
   if (!primary) return;
+
+  const requiredPrimaryEmail = PRIMARY_STRATO_ACCOUNT.email.toLowerCase();
+  if (primary.email.trim().toLowerCase() !== requiredPrimaryEmail) {
+    const existingService = await getStoredStratoCredentials(workspaceId, requiredPrimaryEmail);
+
+    // Preserve the previous primary mailbox as a selectable secondary account.
+    await saveStoredStratoCredentials(workspaceId, primary, true);
+
+    // service@jj-media.info is the canonical JJ-Media sender. Prefer already stored
+    // service credentials; otherwise keep the existing password for installations
+    // where STRATO aliases/mailboxes share the same login secret.
+    await saveStoredStratoCredentials(workspaceId, existingService ?? {
+      email: requiredPrimaryEmail,
+      password: primary.password,
+      senderName: PRIMARY_STRATO_ACCOUNT.senderName,
+    });
+
+    primary = await getStoredStratoCredentials(workspaceId);
+    if (!primary) return;
+  }
 
   for (const account of BOOTSTRAP_ACCOUNTS) {
     const normalizedEmail = account.email.trim().toLowerCase();
