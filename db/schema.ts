@@ -371,34 +371,6 @@ export const outboundEvidenceItems = pgTable(
 );
 
 
-export const acquisitionPersonalizations = pgTable(
-  "acquisition_personalizations",
-  {
-    leadId: uuid("lead_id").primaryKey().references(() => leads.id, { onDelete: "cascade" }),
-    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
-    version: integer("version").notNull().default(1),
-    status: text("status").notNull().default("draft"),
-    angle: text("angle").notNull().default(""),
-    hook: text("hook").notNull().default(""),
-    subject: text("subject").notNull().default(""),
-    emailBody: text("email_body").notNull().default(""),
-    landingEyebrow: text("landing_eyebrow").notNull().default(""),
-    landingHeadline: text("landing_headline").notNull().default(""),
-    landingSubheadline: text("landing_subheadline").notNull().default(""),
-    videoHook: text("video_hook").notNull().default(""),
-    cta: text("cta").notNull().default(""),
-    factIds: jsonb("fact_ids").$type<string[]>().notNull().default([]),
-    lockedFields: jsonb("locked_fields").$type<string[]>().notNull().default([]),
-    rationale: text("rationale").notNull().default(""),
-    generatedBy: text("generated_by").notNull().default("rules_v1"),
-    generatedAt: timestamp("generated_at", { withTimezone: true }).defaultNow().notNull(),
-    createdAt,
-    updatedAt,
-  },
-  (table) => [
-    index("acquisition_personalizations_workspace_idx").on(table.workspaceId, table.updatedAt),
-  ],
-);
 
 export const activities = pgTable(
   "activities",
