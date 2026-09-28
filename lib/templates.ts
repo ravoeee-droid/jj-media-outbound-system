@@ -1,6 +1,6 @@
 export const defaultSettings: Record<string, string> = {
   sender_name: "JJ-Media",
-  sender_email: "",
+  sender_email: "service@jj-media.info",
   calendar_embed_url: "",
   offer_name: "Social Media Wachstumssystem",
   booking_cta: "15 Minuten Potenzial-Call",
