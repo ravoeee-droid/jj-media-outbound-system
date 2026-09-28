@@ -2,8 +2,9 @@ import { and, eq, gt, gte, inArray, isNotNull } from "drizzle-orm";
 import { getDb } from "@/db";
 import { activities, leads, outreach, tasks } from "@/db/schema";
 import { extractMailReferenceIds } from "@/lib/outreach-policy";
-import { getStratoMailStatus, listRecentStratoInboxMessages } from "@/lib/strato-mail";
+import { getStratoMailStatus, getStratoMailThread, listRecentStratoInboxMessages } from "@/lib/strato-mail";
 import { refreshSequence } from "@/lib/adaptive-sequence";
+import { storeAndClassifyInbound } from "@/lib/reply-intelligence";
 
 export async function cancelPendingEmailFollowups(args: {
   workspaceId: string;
@@ -94,13 +95,17 @@ export async function syncInboundEmailReplies(workspaceId?: string) {
       ))
       .limit(500);
 
-    const leadIds = new Set<string>();
-    for (const item of sent) {
-      if (item.providerMessageId && referenceIds.has(item.providerMessageId)) leadIds.add(item.leadId);
+    const sentByMessageId = new Map(sent.filter(item => item.providerMessageId).map(item => [item.providerMessageId!, item.leadId]));
+    const matchedReplies = new Map<string, typeof messages[number]>();
+    for (const message of messages) {
+      for (const ref of extractMailReferenceIds({ references: message.references, inReplyTo: message.inReplyTo })) {
+        const leadId = sentByMessageId.get(ref);
+        if (leadId && !matchedReplies.has(leadId)) matchedReplies.set(leadId, message);
+      }
     }
-    matched += leadIds.size;
+    matched += matchedReplies.size;
 
-    for (const leadId of leadIds) {
+    for (const [leadId, replyHeader] of matchedReplies) {
       const [lead] = await db.select().from(leads)
         .where(and(eq(leads.workspaceId, currentWorkspaceId), eq(leads.id, leadId)))
         .limit(1);
@@ -129,11 +134,31 @@ export async function syncInboundEmailReplies(workspaceId?: string) {
             leadId,
             type: "email_reply_detected",
             title: "Antwort auf Info-Mail erkannt",
-            detail: "Automatische Follow-ups wurden gestoppt; persönliche Übernahme ist jetzt der nächste Schritt.",
+            detail: "Automatische Follow-ups wurden gestoppt; Reply Intelligence analysiert die Antwort.",
           }),
         ]);
       }
-      await refreshSequence(currentWorkspaceId, leadId).catch(() => undefined);
+
+      try {
+        const full = await getStratoMailThread(replyHeader.id, currentWorkspaceId);
+        const inbound = full.thread.messages[0];
+        if (inbound?.body) {
+          await storeAndClassifyInbound({
+            workspaceId: currentWorkspaceId,
+            leadId,
+            providerMessageId: inbound.messageId || replyHeader.messageId || replyHeader.id,
+            mailboxId: full.profile?.emailAddress,
+            subject: inbound.subject || replyHeader.subject || "",
+            body: inbound.body,
+            receivedAt: inbound.internalDate ? new Date(Number(inbound.internalDate)) : new Date(),
+          });
+        } else {
+          await refreshSequence(currentWorkspaceId, leadId).catch(() => undefined);
+        }
+      } catch (error) {
+        console.error("Reply Intelligence fehlgeschlagen", error);
+        await refreshSequence(currentWorkspaceId, leadId).catch(() => undefined);
+      }
     }
   }
 
