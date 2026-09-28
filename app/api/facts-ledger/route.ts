@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { apiError, requirePermission } from "@/lib/workspace";
-import { buildClaimContext, listFactsForLead, reviewFact } from "@/lib/facts-ledger";
+import { buildClaimContext, listFactsForLead, reviewFact, syncLeadFacts } from "@/lib/facts-ledger";
 
 export const runtime = "nodejs";
 
@@ -15,6 +15,7 @@ export async function GET(request: Request) {
     const workspace = await requirePermission("manage_leads");
     const leadId = new URL(request.url).searchParams.get("leadId");
     if (!leadId) return Response.json({ error: "Lead-ID fehlt." }, { status: 400 });
+    await syncLeadFacts(workspace.workspaceId, leadId);
     const [facts, context] = await Promise.all([
       listFactsForLead(workspace.workspaceId, leadId),
       buildClaimContext(workspace.workspaceId, leadId),
