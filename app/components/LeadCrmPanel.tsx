@@ -5,6 +5,7 @@ import MeetingPicker from "./MeetingPicker";
 import AcquisitionControlPanel from "./AcquisitionControlPanel";
 import LeadIntelligencePanel from "./LeadIntelligencePanel";
 import FactsLedgerPanel from "./FactsLedgerPanel";
+import PersonalizationPanel from "./PersonalizationPanel";
 import styles from "./LeadCrmPanel.module.css";
 
 type LeadDetail = {
@@ -485,6 +486,8 @@ export default function LeadCrmPanel({
         <LeadIntelligencePanel leadId={lead.id} />
 
         <FactsLedgerPanel leadId={lead.id} />
+
+        <PersonalizationPanel leadId={lead.id} />
 
         <section className={styles.actions}>
           <div className={styles.sectionHead}><div><small>MANUELLE AKTIONEN</small><h3>Nächster Schritt ohne Umwege</h3></div><span>{lead.nextAction === "none" ? "Kein Schritt offen" : "Als Nächstes: " + lead.nextAction}</span></div>
