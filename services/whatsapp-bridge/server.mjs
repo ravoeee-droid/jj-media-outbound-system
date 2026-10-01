@@ -25,13 +25,13 @@ if (!config.baseUrl || !config.cookie || !config.workerId) throw new Error("Loka
 const ollamaModel = String(config.ollamaModel || "qwen3:4b");
 const ollamaUrl = "http://127.0.0.1:11434";
 
-const OUTBOUND_POLL_MIN_MS = 2_500;
-const OUTBOUND_POLL_MAX_MS = 20_000;
-const AI_POLL_MIN_MS = 1_500;
-const AI_POLL_MAX_MS = 30_000;
-const STATUS_INTERVAL_MS = 60_000;
+const OUTBOUND_POLL_MIN_MS = 30_000;
+const OUTBOUND_POLL_MAX_MS = 120_000;
+const AI_POLL_MIN_MS = 60_000;
+const AI_POLL_MAX_MS = 300_000;
+const STATUS_INTERVAL_MS = 5 * 60_000;
 const OLLAMA_INTERVAL_MS = 5 * 60_000;
-const TICK_INTERVAL_MS = 60_000;
+const TICK_INTERVAL_MS = 5 * 60_000;
 
 function acquirePid() {
   if (existsSync(pidPath)) {
@@ -246,9 +246,9 @@ async function pump() {
 }
 
 function wakeAiPump() {
-  for (const delay of [400, 1_200, 2_800]) {
-    setTimeout(() => { if (!stopping) void aiPump(); }, delay);
-  }
+  // One fast wake-up is enough after real activity. Repeated wake-ups multiplied
+  // Vercel invocations without adding useful responsiveness.
+  setTimeout(() => { if (!stopping) void aiPump(); }, 1_000);
 }
 
 async function tickPump() {
