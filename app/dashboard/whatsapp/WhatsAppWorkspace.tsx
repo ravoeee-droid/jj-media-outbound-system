@@ -113,14 +113,14 @@ export default function WhatsAppWorkspace() {
     void load();
     const poll = window.setInterval(() => {
       if (!document.hidden && tab === "inbox") void refresh().catch(() => undefined);
-    }, 60_000);
+    }, 5 * 60_000);
     return () => { live = false; window.clearInterval(poll); };
   }, [refresh, chooseThread, tab]);
 
   useEffect(() => {
     if (!selected) return;
     void refreshDetail(selected).catch((err) => setError(err.message));
-    const poll = window.setInterval(() => { if (!document.hidden && tab === "inbox") void refreshDetail(selected).catch(() => undefined); }, 20_000);
+    const poll = window.setInterval(() => { if (!document.hidden && tab === "inbox") void refreshDetail(selected).catch(() => undefined); }, 60_000);
     return () => window.clearInterval(poll);
   }, [selected, refreshDetail, tab]);
 
