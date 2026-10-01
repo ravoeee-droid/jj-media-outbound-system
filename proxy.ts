@@ -18,6 +18,9 @@ const publicApiPrefixes = [
   "/api/cron/automation",
   "/api/telegram/webhook",
   "/api/whatsapp/webhook",
+  // Worker route performs the same signed cockpit-cookie authorization itself.
+  // Bypassing Proxy avoids a second Vercel invocation for every local bridge poll.
+  "/api/whatsapp/worker",
 ];
 
 function withoutBasePath(pathname: string) {
