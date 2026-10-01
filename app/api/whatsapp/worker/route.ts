@@ -13,6 +13,10 @@ export const maxDuration = 120;
 export const dynamic = "force-dynamic";
 
 const STATUS_KEY = "jj_whatsapp_worker_status";
+// Emergency brake after Vercel account-wide usage exhaustion. The currently
+// installed local bridge may still be an older fast-polling build; keep its
+// expensive queue/AI/tick actions dormant until the throttled bridge is rolled out.
+const HIGH_FREQUENCY_WORKER_PAUSED = true;
 const AI_JOB_PREFIX = "jj_ollama_job:";
 const inputSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("status"), workerId: z.string().uuid(), connected: z.boolean(), phone: z.string().max(40).default(""), qr: z.string().max(120_000).default(""), version: z.string().max(80).default(""), aiReady: z.boolean().default(false), aiModel: z.string().max(120).default("") }),
@@ -183,6 +187,11 @@ export async function POST(request: Request) {
     const workspace = await whatsappWorkspace();
     const input = inputSchema.parse(await limitedJson(request, 180_000));
     const workspaceId = workspace.workspaceId;
+    if (HIGH_FREQUENCY_WORKER_PAUSED && ["tick","pull","ai_pull"].includes(input.action)) {
+      if (input.action === "pull") return Response.json({ message: null, paused: true });
+      if (input.action === "ai_pull") return Response.json({ job: null, paused: true });
+      return Response.json({ ok: true, paused: true });
+    }
     if (input.action === "status") {
       const value = JSON.stringify({ connected: input.connected, phone: input.phone, qr: input.qr, workerId: input.workerId, version: input.version, aiReady: input.aiReady, aiModel: input.aiModel, updatedAt: new Date().toISOString() });
       await getDb().insert(settings).values({ workspaceId, key: STATUS_KEY, value }).onConflictDoUpdate({ target: [settings.workspaceId, settings.key], set: { value, updatedAt: new Date() } });
